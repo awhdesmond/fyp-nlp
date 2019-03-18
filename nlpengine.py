@@ -127,11 +127,7 @@ class NLPEngine(object):
 
 
     def isClaimerVerb(self, spacyToken):
-        for syn in ["see", "say"]:
-            if self.areSynonyms(syn, spacyToken.lemma_, pos="verb"):
-                return True
-        return False
-
+        return spacyToken.lemma_ in ["say","announce", "answer", "assert", "claim","convey","declare","deliver","disclose","express","mention","reply","report","respond","reveal"]
 
     def mergeSpacySpansForDoc(self, spacyDoc):
         for span in list(spacyDoc.ents) + list(spacyDoc.noun_chunks):
