@@ -191,7 +191,7 @@ class NLPEngine(object):
     def handleAnalyseQuery(self, query, relatedArticles):
         queryClaims = self.nlpProcessText(query)
         if len(queryClaims) <= 0:
-            return
+            return []
 
         queryClaim = queryClaims[0]
 
