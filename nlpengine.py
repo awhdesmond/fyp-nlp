@@ -3,6 +3,8 @@ import pydash
 import collections
 import string
 
+from concurrent.futures import ThreadPoolExecutor
+
 from cachetools import cached, LRUCache
 from thesaurus import Word
 from parseTree import ParseTree, ParseTreeNode
@@ -195,19 +197,30 @@ class NLPEngine(object):
 
         queryClaim = queryClaims[0]
 
-        def filterHasSimilarField(field, queryClaim, relatedArticleClaims):
-            results = []
-            for claim in relatedArticleClaims:
-                if claim.spolt[field] == "":
-                    results.append(claim)
-                elif self.areSimilarSubjects(queryClaim.spolt[field], claim.spolt[field]):
-                    results.append(claim)
-            return results
+        def _compareQueryWithRelatedArticle(article):
+            article["evidence"] = {
+                "entailment": [],
+                "contradiction": [],
+                "neutral": []
+            }
 
-        evidence = []
-        for article in relatedArticles:
+            def filterHasSimilarField(field, queryClaim, relatedArticleClaims, drop=False):
+                results = []
+                for claim in relatedArticleClaims:
+                    if claim.spolt[field] == "":
+                        if drop:
+                            continue
+                        else:
+                            results.append(claim)    
+                    elif self.areSimilarSubjects(queryClaim.spolt[field], claim.spolt[field]):
+                        results.append(claim)
+                return results
+        
+            print("processing text")
             claims = self.nlpProcessText(article["content"])
-            relatedClaims = filterHasSimilarField("subject", queryClaim, claims)
+
+            print("processing similarity")
+            relatedClaims = filterHasSimilarField("subject", queryClaim, claims, drop=True)
 
             if queryClaim.spolt["object"] != "":
                 relatedClaims = filterHasSimilarField("object", queryClaim, relatedClaims)
@@ -216,15 +229,7 @@ class NLPEngine(object):
                 relatedClaims = filterHasSimilarField("prepPobj", queryClaim, relatedClaims)
 
             if len(relatedClaims) <= 0:
-                continue
-
-
-            article["evidence"] = {
-                "entailment": [],
-                "contradiction": [],
-                "neutral": []
-            }
-            
+                return article
 
             for claim in relatedClaims:
                 hypothesis = queryClaim.sentence
@@ -242,11 +247,15 @@ class NLPEngine(object):
                     article["evidence"]["contradiction"].append(claim.serialise())
                 else:
                     article["evidence"]["neutral"].append(claim.serialise())
+            
+            return article
 
-            evidence.append(article)
-        return evidence
 
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            articlesWithEvidence = executor.map(_compareQueryWithRelatedArticle, relatedArticles)
+            articlesWithEvidence = list(articlesWithEvidence)
 
+        return articlesWithEvidence
 
 
 
