@@ -7,12 +7,39 @@ from cachetools import cached, LRUCache
 from thesaurus import Word
 from parseTree import ParseTree, ParseTreeNode
 
-SpoltScore = collections.namedtuple('SpoltScore', 'spolt score article')
+from allennlp.predictors.predictor import Predictor
+predictor = Predictor.from_path("./decomposable-attention-elmo-2018.02.19.tar.gz")
+
 cache = LRUCache(maxsize=1000)
 
+SUBJECTS_COSINE_SIMILARITY_THRESHOLD = 0.6
 SYNONYMS_FLAG = 0
 ANTONYMS_FLAG = 1
 NEUTRAL_FLAG  = 2
+
+ENTAILMENT_INDEX = 0
+CONTRADICTION_INDEX = 1
+NEUTRAL_INDEX = 2
+
+ENTAILMENT_THRESHOLD = 0.5
+CONTRADICT_THRESHOLD = 0.5
+
+class Claim():
+    def __init__(self, spolt, score, claimer, sentence):
+        self.spolt = spolt
+        self.score = score
+        self.claimer = claimer
+        self.sentence = sentence
+        
+    def serialise(self):
+        return {
+            "score": self.score,
+            "claimer": self.claimer,
+            "sentence": self.sentence,
+        }
+
+    def __repr__(self):
+        return self.sentence + " (" + str(self.score) + ")"
 
 class NLPEngine(object):
 
@@ -40,69 +67,16 @@ class NLPEngine(object):
         else:
             return sentence
 
-    def extractWhatOtherPeopleClaim(self, spacyToken):
-        parseTree = ParseTree(spacyToken)
-        ccompChild = parseTree.root.retrieveChildren("ccomp")
-        claimerNodes = parseTree.extractSubjectNodes(withCCAndConj=True)
-        
-        if len(ccompChild) > 0:
-            saying = " ".join([x.text for x in list(ccompChild[0].innerToken.subtree)]).strip()
-            
-            subject = ""
-            for node in claimerNodes:
-                subject = subject + " " + node.innerToken.text
-            subject = subject.strip()
-            
-            return {
-                "saying": saying,
-                "claimer": subject
-            }
-        return None
-
-    def nlpProcessText(self, text, debug=False):
-        textDoc = self.nlp(text)
-    
-        spolts = []
-        sayings = []
-        
-        for spacySentence in textDoc.sents:
-            sanitizedSentence = self.sanitizeText(spacySentence.text)
-            sentenceDoc = self.nlp(sanitizedSentence)
-            
-            for span in list(sentenceDoc.ents) + list(sentenceDoc.noun_chunks):
-                span.merge()
-                
-            for spacyToken in sentenceDoc:
-                if spacyToken.dep_ == "ROOT" and spacyToken.pos_ == "VERB":
-                    if self.areSynonyms("see", spacyToken.lemma_, pos="verb"):
-                        saying = self.extractWhatOtherPeopleClaim(spacyToken)
-                        if saying is None:
-                            parseTree = ParseTree(spacyToken)
-                            spolts.append(parseTree.extractData())
-                        else:
-                            sayings.append(saying)
-                    elif self.areSynonyms("say", spacyToken.lemma_, pos="verb"):
-                        saying = self.extractWhatOtherPeopleClaim(spacyToken)
-                        if saying is None:
-                            parseTree = ParseTree(spacyToken)
-                            spolts.append(parseTree.extractData())
-                        else:
-                            r = self.nlpProcessText(saying["saying"])
-                            for c in r:
-                                c["claimer"] = saying["claimer"]
-                                spolts.append(c)
-
-                    else:
-                        parseTree = ParseTree(spacyToken)
-                        spolts.append(parseTree.extractData())
-                        
-        return spolts
+    def similarityScore(self, subA, subB):
+        subADoc = self.nlp(subA)
+        subBDoc = self.nlp(subB)
+        return subADoc.similarity(subBDoc)
 
     @cached(cache)
     def areSynonyms(self, stringA, stringB, pos=None):
         if stringA == stringB:
             return True
-        
+
         try:
             wordA = Word(stringA)
             wordB = Word(stringB)
@@ -112,7 +86,7 @@ class NLPEngine(object):
             return stringA in synonymsB or stringB in synonymsA
         except:
             return False
-        
+
     @cached(cache)
     def areAntonyms(self, stringA, stringB, pos=None):
         try:
@@ -124,41 +98,25 @@ class NLPEngine(object):
             return stringA in antonymsB or stringB in antonymsA
         except:
             return False
-        
-    def similarityScore(self, subA, subB):
+
+    def areSimilarSubjects(self, subA, subB, alpha=SUBJECTS_COSINE_SIMILARITY_THRESHOLD):
         subADoc = self.nlp(subA)
         subBDoc = self.nlp(subB)
-        return subADoc.similarity(subBDoc)
 
-    def areSimilarSubjects(self, subA, subB, alpha=0.50):
-        wordsA = subA.translate(str.maketrans('', '', string.punctuation)).split(" ")
-        wordsB = subB.translate(str.maketrans('', '', string.punctuation)).split(" ")
-        
-        intersectionWords = pydash.arrays.intersection(wordsA, wordsB)
-        for word in intersectionWords:
-            pydash.arrays.pull(wordsA, word)
-            pydash.arrays.pull(wordsB, word)
-        
-        if len(wordsA) == 0 or len(wordsB) == 0:
-            return True
-        
-        wordsADoc = self.nlp(" ".join(wordsA))
-        wordsBDoc = self.nlp(" ".join(wordsB))
-        
         # Make a semantic similarity estimate. 
         # The default estimate is cosine similarity using an average of word vectors.
         # Order of words does not matter
-        return wordsADoc.similarity(wordsBDoc) >= alpha
+        return subADoc.similarity(subBDoc) >= alpha
 
     def areSimilarPredicates(self, predA, predB):
         predADoc = self.nlp(predA)
         predBDoc = self.nlp(predB)
         predALemma = predADoc[0].lemma_
         predBLemma = predBDoc[0].lemma_
-        
+
         synonymsFlag = self.areSynonyms(predALemma, predBLemma)
         antonymsFlag = self.areAntonyms(predALemma, predBLemma)
-        
+
         if synonymsFlag:
             return SYNONYMS_FLAG
         elif antonymsFlag:
@@ -166,93 +124,127 @@ class NLPEngine(object):
         return NEUTRAL_FLAG
 
 
-    # 1: Analyse the query first
-    # 2: Analyse the related articles to retrieve their spolts
-    # 3: Filter out based on subjects
-    def handleAnalyseQuery(self, text, relatedArticles):
-        relatedArticlesSpolts = []
-        for article in relatedArticles:
-            articleSpolts = self.nlpProcessText(article["content"])
-            articleSpolts = [(articleSpolt, article) for articleSpolt in articleSpolts]
-            relatedArticlesSpolts.extend(articleSpolts)
-        
-    
-        querySpolts = self.nlpProcessText(text)
-        if len(querySpolts) <= 0:
-            return {
-                "relatedArticles": relatedArticles
-            }
+    def isClaimerVerb(self, spacyToken):
+        for syn in ["see", "say"]:
+            if self.areSynonyms(syn, spacyToken.lemma_, pos="verb"):
+                return True
+        return False
 
-        querySpolt = querySpolts[0]
-        relatedSpoltScores = [SpoltScore(spolt=articleSpolt[0], score=[], article=articleSpolt[1]) for articleSpolt in relatedArticlesSpolts]
 
-        def filterSimilarClaimsOfField(field, inputSpolt, spoltScores):
-            results = []
-            for spoltScore in spoltScores:
-                if spoltScore.spolt[field] == "":
-                    continue
-                
-                 
-                if self.areSimilarSubjects(inputSpolt[field], spoltScore.spolt[field]):
-                    spoltScore.score.append(self.similarityScore(inputSpolt[field], spoltScore.spolt[field])) 
-                    newSpoltScore = SpoltScore(spolt=spoltScore.spolt, score=spoltScore.score, article=spoltScore.article)
-                    results.append(newSpoltScore)
+    def mergeSpacySpansForDoc(self, spacyDoc):
+        for span in list(spacyDoc.ents) + list(spacyDoc.noun_chunks):
+            span.merge
             
-            return results
 
-        def filterSimilarClaimsOfAction(inputSpolt, spoltScores):
+    def extractWhatOtherPeopleClaim(self, spacyToken):
+        parseTree = ParseTree(spacyToken)
+        ccompChild = parseTree.root.retrieveChildren("ccomp")
+        claimerNodes = parseTree.extractSubjectNodes(withCCAndConj=True)
+
+        if len(ccompChild) > 0:
+            saying = " ".join([x.text for x in list(ccompChild[0].innerToken.subtree)]).strip()
+
+            subject = ""
+            for node in claimerNodes:
+                subject = subject + " " + node.innerToken.text
+            subject = subject.strip()
+
+            return {
+                "saying": saying,
+                "claimer": subject
+            }
+        return None
+
+    def nlpProcessText(self, text, debug=False):
+        textDoc = self.nlp(text)
+
+        claims = []
+        for spacySentence in textDoc.sents:
+            sanitizedSentence = self.sanitizeText(spacySentence.text)
+            sentenceDoc = self.nlp(sanitizedSentence)
+            self.mergeSpacySpansForDoc(sentenceDoc)
+            
+            for spacyToken in sentenceDoc:
+                if spacyToken.dep_ == "ROOT" and spacyToken.pos_ == "VERB":
+                    
+                    if self.isClaimerVerb(spacyToken):
+                        saying = self.extractWhatOtherPeopleClaim(spacyToken)
+                        if saying is None:
+                            parseTree = ParseTree(spacyToken)
+                            spolt = parseTree.extractData()
+                            claim = Claim(spolt, 0, "", sanitizedSentence)
+                            claims.append(claim)
+                        else:
+                            result = self.nlpProcessText(saying["saying"])
+                            for claim in result:
+                                claim.claimer = saying["claimer"]
+                                claims.append(claim)
+                            
+                    else:
+                        parseTree = ParseTree(spacyToken)
+                        spolt = parseTree.extractData()
+                        claim = Claim(spolt, 0, "", sanitizedSentence)
+                        claims.append(claim)
+        return claims
+
+
+    def handleAnalyseQuery(self, query, relatedArticles):
+        queryClaims = self.nlpProcessText(query)
+        if len(queryClaims) <= 0:
+            return
+
+        queryClaim = queryClaims[0]
+
+        def filterHasSimilarField(field, queryClaim, relatedArticleClaims):
             results = []
-            for spoltScore in spoltScores:
-                if spoltScore.spolt["action"] == "":
-                    continue
-
-                if self.areSimilarPredicates(inputSpolt["action"], spoltScores.spolt["action"]) == 0:
-                    spoltScore.score.append(self.similarityScore(inputSpolt["action"], spoltScore.spolt["action"])) 
-                    newSpoltScore = SpoltScore(spolt=spoltScore.spolt, score=spoltScore.score, article=spoltScore.article)
-                    results.append(newSpoltScore)
+            for claim in relatedArticleClaims:
+                if claim.spolt[field] == "":
+                    results.append(claim)
+                elif self.areSimilarSubjects(queryClaim.spolt[field], claim.spolt[field]):
+                    results.append(claim)
             return results
-       
-        relatedSpoltScores = filterSimilarClaimsOfField("subject", querySpolt, relatedSpoltScores)
-        if querySpolt["object"] != "":
-            relatedSpoltScores = filterSimilarClaimsOfField("object", querySpolt, relatedSpoltScores)
-        elif querySpolt["prepPobj"] != "":
-            relatedSpoltScores = filterSimilarClaimsOfField("prepPobj", querySpolt, relatedSpoltScores)
 
-        if querySpolt["action"] != "":
-            relatedSpoltScores = filterSimilarClaimsOfAction(querySpolt, relatedSpoltScores)
+        evidence = []
+        for article in relatedArticles:
+            claims = self.nlpProcessText(article["content"])
+            relatedClaims = filterHasSimilarField("subject", queryClaim, claims)
 
-        evidenceMap = {
-            "supporting": [],
-            "opposing": [],
-            "neutral": [],
-            "relatedArticles": relatedArticles
-        }
+            if queryClaim.spolt["object"] != "":
+                relatedClaims = filterHasSimilarField("object", queryClaim, relatedClaims)
+            
+            if queryClaim.spolt["prepPobj"] != "":
+                relatedClaims = filterHasSimilarField("prepPobj", queryClaim, relatedClaims)
 
-        for spoltScore in relatedSpoltScores:
-            finalScore = sum(spoltScore.score) / len(spoltScore.score)
-            similarFlag = self.areSimilarPredicates(querySpolt["predicate"], spoltScore.spolt["predicate"])
+            if len(relatedClaims) <= 0:
+                continue
 
-            if similarFlag == SYNONYMS_FLAG:
-                if (querySpolt["predicateInverse"] != "" and spoltScore.spolt["predicateInverse"] == "")\
-                    or (querySpolt["predicateInverse"] == "" and spoltScore.spolt["predicateInverse"] != ""):
-                        finalScore = -finalScore
-                        newSpoltScore = SpoltScore(spolt=spoltScore.spolt, score=finalScore, article=spoltScore.article)
-                        evidenceMap["opposing"].append(newSpoltScore)
+
+            article["evidence"] = {
+                "entailment": [],
+                "contradiction": [],
+                "neutral": []
+            }
+            
+
+            for claim in relatedClaims:
+                hypothesis = queryClaim.sentence
+                premise = claim.sentence
+                
+                textualEntailmentResult = predictor.predict(hypothesis=hypothesis, premise=premise)
+                entailmentProb = round(textualEntailmentResult['label_probs'][ENTAILMENT_INDEX], 2)
+                contradictProb = round(textualEntailmentResult['label_probs'][CONTRADICTION_INDEX], 2)
+                neutralProb = round(textualEntailmentResult['label_probs'][NEUTRAL_INDEX], 2)
+
+                claim.score = textualEntailmentResult['label_probs']
+                if entailmentProb >= ENTAILMENT_THRESHOLD:
+                    article["evidence"]["entailment"].append(claim.serialise())
+                elif contradictProb >= CONTRADICT_THRESHOLD:
+                    article["evidence"]["contradiction"].append(claim.serialise())
                 else:
-                    newSpoltScore = SpoltScore(spolt=spoltScore.spolt, score=finalScore, article=spoltScore.article)
-                    evidenceMap["supporting"].append(newSpoltScore)
-            elif similarFlag == 1:
-                newSpoltScore = SpoltScore(spolt=spoltScore.spolt, score=finalScore, article=spoltScore.article)
-                evidenceMap["opposing"].append(newSpoltScore)
-            else:
-                newSpoltScore = SpoltScore(spolt=spoltScore.spolt, score=finalScore, article=spoltScore.article)
-                evidenceMap["neutral"].append(newSpoltScore)            
-    
-        return evidenceMap
+                    article["evidence"]["neutral"].append(claim.serialise())
 
-
-
-
+            evidence.append(article)
+        return evidence
 
 
 
