@@ -9,8 +9,7 @@ from cachetools import cached, LRUCache
 from thesaurus import Word
 from parseTree import ParseTree, ParseTreeNode
 
-from allennlp.predictors.predictor import Predictor
-predictor = Predictor.from_path("./decomposable-attention-elmo-2018.02.19.tar.gz")
+from textualEntailment import TextualEntailmentModel
 
 cache = LRUCache(maxsize=1000)
 
@@ -23,8 +22,8 @@ ENTAILMENT_INDEX = 0
 CONTRADICTION_INDEX = 1
 NEUTRAL_INDEX = 2
 
-ENTAILMENT_THRESHOLD = 0.5
-CONTRADICT_THRESHOLD = 0.5
+ENTAILMENT_THRESHOLD = 0.6
+CONTRADICT_THRESHOLD = 0.6
 
 class Claim():
     def __init__(self, spolt, score, claimer, sentence):
@@ -47,6 +46,9 @@ class NLPEngine(object):
 
     def __init__(self):
         self.nlp = spacy.load('en_core_web_lg')
+        self.textEntModel = TextualEntailmentModel()
+        self.textEntModel.createModel()
+
         
 
     def sanitizeText(self, text):
@@ -212,10 +214,8 @@ class NLPEngine(object):
                         results.append(claim)
                 return results
         
-            print("processing text")
             claims = self.nlpProcessText(article["content"])
 
-            print("processing similarity")
             relatedClaims = filterHasSimilarField("subject", queryClaim, claims, drop=True)
 
             if queryClaim.spolt["object"] != "":
@@ -231,7 +231,7 @@ class NLPEngine(object):
                 hypothesis = queryClaim.sentence
                 premise = claim.sentence
                 
-                textualEntailmentResult = predictor.predict(hypothesis=hypothesis, premise=premise)
+                textualEntailmentResult = self.textEntModel.predict(premise, hypothesis)
                 entailmentProb = round(textualEntailmentResult['label_probs'][ENTAILMENT_INDEX], 2)
                 contradictProb = round(textualEntailmentResult['label_probs'][CONTRADICTION_INDEX], 2)
                 neutralProb = round(textualEntailmentResult['label_probs'][NEUTRAL_INDEX], 2)
