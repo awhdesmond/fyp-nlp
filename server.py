@@ -24,13 +24,13 @@ def analyseHandler():
     
     if analysis == None:
         result = {
-            "queryHasClaims": False
+            "queryHasClaims": False,
             "articlesWithEvidence": []
         }
         return utils.createJSONResponse(result)
     else:
         result = {
-            "queryHasClaims": True
+            "queryHasClaims": True,
             "articlesWithEvidence": analysis
         }
         return utils.createJSONResponse(result)
