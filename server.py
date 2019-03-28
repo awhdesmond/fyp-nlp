@@ -20,8 +20,19 @@ def analyseHandler():
 
     text            = body["text"]
     relatedArticles = body["relatedArticles"]
-    result = nlpEngine.handleAnalyseQuery(text, relatedArticles)
-
-    return utils.createJSONResponse(result)
+    analysis = nlpEngine.handleAnalyseQuery(text, relatedArticles)
+    
+    if analysis == None:
+        result = {
+            "queryHasClaims": False
+            "articlesWithEvidence": []
+        }
+        return utils.createJSONResponse(result)
+    else:
+        result = {
+            "queryHasClaims": True
+            "articlesWithEvidence": analysis
+        }
+        return utils.createJSONResponse(result)
 
 run(app, host='0.0.0.0', port=8080)
