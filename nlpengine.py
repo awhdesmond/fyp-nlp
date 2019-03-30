@@ -13,7 +13,7 @@ from textualEntailment import TextualEntailmentModel
 
 cache = LRUCache(maxsize=1000)
 
-SUBJECTS_COSINE_SIMILARITY_THRESHOLD = 0.6
+SUBJECTS_COSINE_SIMILARITY_THRESHOLD = 0.75
 SYNONYMS_FLAG = 0
 ANTONYMS_FLAG = 1
 NEUTRAL_FLAG  = 2
@@ -37,6 +37,7 @@ class Claim():
             "score": self.score,
             "claimer": self.claimer,
             "sentence": self.sentence,
+            "spolt": self.spolt
         }
 
     def __repr__(self):
@@ -48,8 +49,6 @@ class NLPEngine(object):
         self.nlp = spacy.load('en_core_web_lg')
         self.textEntModel = TextualEntailmentModel()
         self.textEntModel.createModel()
-
-        
 
     def sanitizeText(self, text):
         return text.replace("”", "'") \
@@ -133,7 +132,7 @@ class NLPEngine(object):
 
     def mergeSpacySpansForDoc(self, spacyDoc):
         for span in list(spacyDoc.ents) + list(spacyDoc.noun_chunks):
-            span.merge
+            span.merge()
             
 
     def extractWhatOtherPeopleClaim(self, spacyToken):
@@ -224,19 +223,24 @@ class NLPEngine(object):
             if queryClaim.spolt["prepPobj"] != "":
                 relatedClaims = filterHasSimilarField("prepPobj", queryClaim, relatedClaims)
 
+
+
             if len(relatedClaims) <= 0:
                 return article
 
             for claim in relatedClaims:
+                if claim.spolt['object'] == "" and claim.spolt['prepPobj'] == "":
+                    continue
+
                 hypothesis = queryClaim.sentence
                 premise = claim.sentence
                 
                 textualEntailmentResult = self.textEntModel.predict(premise, hypothesis)
-                entailmentProb = round(textualEntailmentResult['label_probs'][ENTAILMENT_INDEX], 2)
-                contradictProb = round(textualEntailmentResult['label_probs'][CONTRADICTION_INDEX], 2)
-                neutralProb = round(textualEntailmentResult['label_probs'][NEUTRAL_INDEX], 2)
+                entailmentProb = round(textualEntailmentResult[ENTAILMENT_INDEX], 2)
+                contradictProb = round(textualEntailmentResult[CONTRADICTION_INDEX], 2)
+                neutralProb = round(textualEntailmentResult[NEUTRAL_INDEX], 2)
 
-                claim.score = textualEntailmentResult['label_probs']
+                claim.score = textualEntailmentResult.tolist()
                 if entailmentProb >= ENTAILMENT_THRESHOLD:
                     article["evidence"]["entailment"].append(claim.serialise())
                 elif contradictProb >= CONTRADICT_THRESHOLD:

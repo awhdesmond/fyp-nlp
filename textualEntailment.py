@@ -48,6 +48,7 @@ RTE_TEST_PATH = join(DATA_FOLDER, "./rte_1.0/rte_test.json")
 FASTTEXT_FILE = join(DATA_FOLDER, "fasttext-crawl-300d-2M-subword.vec")
 MODEL_WEIGHTS = join(DATA_FOLDER, "fasttext-full-fasttext-full-adam-weights.h5")
 
+
 def precision(y_true, y_pred):
     true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
     predicted_positives = K.sum(K.round(K.clip(y_pred, 0, 1)))
@@ -184,7 +185,6 @@ class TextualEntailmentModel(object):
     }
 
     def __init__(self):
-        self.model = None
         self.tokenizer = None
         self.maxSeqLen = 0
 
@@ -233,6 +233,8 @@ class TextualEntailmentModel(object):
     def loadWordEmbeddings(self):    
         fasttextFile = FASTTEXT_FILE
         wordEmbeddings = {}
+
+
 
         with open(fasttextFile, 'r') as file:
             for line in tqdm(file):
@@ -354,9 +356,14 @@ class TextualEntailmentModel(object):
                       metrics = ['accuracy'])
         
         print('Model created')
-        
         model.load_weights(MODEL_WEIGHTS)
-        self.model = model
+        
+
+
+        global keras_model
+        global keras_graph
+        keras_model = model
+        keras_graph = tf.get_default_graph()
 
     def predict(self, premise, hypothesis):
         s1_word_sequence = self.tokenizer.texts_to_sequences([premise])
@@ -365,4 +372,5 @@ class TextualEntailmentModel(object):
         s1_data = pad_sequences(s1_word_sequence, maxlen=self.maxSeqLen)
         s2_data = pad_sequences(s2_word_sequence, maxlen=self.maxSeqLen)
 
-        return self.model.predict([s1_data, s2_data])[0]
+        with keras_graph.as_default():
+            return keras_model.predict([s1_data, s2_data])[0]
