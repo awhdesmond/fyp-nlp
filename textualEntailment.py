@@ -1,53 +1,64 @@
 import collections
+import time
+import csv
 import json
 import os
 from os.path import join
-import time
 
 import numpy as np
-
 from tqdm import tqdm
-
-import tensorflow as tf
 
 from keras.preprocessing.text import Tokenizer
 from keras.preprocessing.sequence import pad_sequences
 from keras.utils import to_categorical
 from keras.models import Sequential, Model, load_model
-from keras.layers import Embedding, Dense, Input, Dropout, Reshape, BatchNormalization, TimeDistributed, Lambda, Layer, LSTM, Bidirectional, add, concatenate
+from keras.layers import Embedding, Dense, Input, Dropout, Reshape, BatchNormalization, TimeDistributed, Lambda, Layer, LSTM, Bidirectional, Convolution1D, GRU, add, concatenate
 from keras.optimizers import RMSprop, Adam, SGD, Adagrad
 from keras.callbacks import Callback, ModelCheckpoint, TensorBoard, BaseLogger, ReduceLROnPlateau
 
+import tensorflow as tf
+
 # CONSTANTS
+DATA_FOLDER = "./DATA_FOLDER"
+
+ALLNLI_DEV_PATH = join(DATA_FOLDER, "AllNLI/dev.jsonl")  
+ALLNLI_TRAIN_PATH = join(DATA_FOLDER, "AllNLI/train.jsonl")  
+ALLNLI_TEST_PATH = join(DATA_FOLDER, "AllNLI/test.jsonl")  
+
+SNLI_DEV_PATH = join(DATA_FOLDER, "snli_1.0/snli_1.0_dev.jsonl")  
+SNLI_TRAIN_PATH = join(DATA_FOLDER, "snli_1.0/snli_1.0_train.jsonl")  
+SNLI_TEST_PATH = join(DATA_FOLDER, "snli_1.0/snli_1.0_test.jsonl")  
+
+MULTINLI_MATCH_PATH = join(DATA_FOLDER, "multinli_1.0/multinli_1.0_dev_matched.jsonl") 
+MULTINLI_MISMATCH_PATH = join(DATA_FOLDER, "multinli_1.0/multinli_1.0_dev_mismatched.jsonl") 
+MULTINLI_TRAIN_PATH = join(DATA_FOLDER, "multinli_1.0/multinli_1.0_train.jsonl")  
+
+RTE_DEV_PATH = join(DATA_FOLDER, "rte_1.0/rte.json")
+RTE_TEST_PATH = join(DATA_FOLDER, "rte_1.0/rte_test.json")
+
+FNC_TRAIN_STANCES_PATH = join(DATA_FOLDER, "fnc-1/train_stances.csv")
+FNC_TRAIN_BODIES_PATH = join(DATA_FOLDER, "fnc-1/train_bodies.csv")
+FNC_TEST_STANCES_PATH = join(DATA_FOLDER, "fnc-1/competition_test_stances.csv")
+FNC_TEST_BODIES_PATH = join(DATA_FOLDER, "fnc-1/competition_test_bodies.csv")
+
+EMERGENT_FULL_PATH = join(DATA_FOLDER, "emergent/url-versions-2015-06-14.csv")
+
+GLOVE_FILE = join(DATA_FOLDER, "glove.840B.300d.txt")
+MODEL_WEIGHTS = join(DATA_FOLDER, "glove-full-glove-full-adam-checkpoint-weights.05-0.80.hdf5")
+
+labelsMap = {
+    "entailment": 0,
+    "contradiction": 1,
+    "neutral": 2
+}
+
 lr = 0.001
 lr_decay = 1e-4
-epochs = 5
+epochs = 10
 batch_size = 16
-
 eps = 1e-6
 
-DATA_FOLDER = "./AllNLI"
-
-# Not used
-ALLNLI_DEV_PATH = "./AllNLI/dev.jsonl"
-ALLNLI_TRAIN_PATH = "./AllNLI/train.jsonl"
-ALLNLI_TEST_PATH = "./AllNLI/test.jsonl"
-
-SNLI_DEV_PATH = "./snli_1.0/snli_1.0_dev.jsonl"
-SNLI_TRAIN_PATH = "./snli_1.0/snli_1.0_train.jsonl"
-SNLI_TEST_PATH ="./snli_1.0/snli_1.0_test.jsonl"
-
-# Using
-MULTINLI_MATCH_PATH = join(DATA_FOLDER, "./multinli_1.0/multinli_1.0_dev_matched.jsonl") 
-MULTINLI_MISMATCH_PATH = join(DATA_FOLDER, "./multinli_1.0/multinli_1.0_dev_mismatched.jsonl") 
-MULTINLI_TRAIN_PATH = join(DATA_FOLDER, "./multinli_1.0/multinli_1.0_train.jsonl")  
-
-RTE_DEV_PATH = join(DATA_FOLDER, "./rte_1.0/rte.json")
-RTE_TEST_PATH = join(DATA_FOLDER, "./rte_1.0/rte_test.json") 
-
-FASTTEXT_FILE = join(DATA_FOLDER, "fasttext-crawl-300d-2M-subword.vec")
-MODEL_WEIGHTS = join(DATA_FOLDER, "fasttext-full-fasttext-full-adam-weights.h5")
-
+model_name = "glove-full"
 
 def precision(y_true, y_pred):
     true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
@@ -188,15 +199,32 @@ class TextualEntailmentModel(object):
         self.tokenizer = None
         self.maxSeqLen = 0
 
-    def loadDataset(self):
-        RTE_PATHS = [RTE_DEV_PATH, RTE_TEST_PATH]
-        MNLI_PATHS = [MULTINLI_MATCH_PATH, MULTINLI_MISMATCH_PATH, MULTINLI_TRAIN_PATH]
-        
-        premises = []
+    def load_allnli(self):
+        print("Loading AllNLI...")
+        premises   = []
         hypothesis = []
-        labels = []
+        labels     = []
 
-        for path in RTE_PATHS:
+        for path in [ALLNLI_DEV_PATH, ALLNLI_TRAIN_PATH]:
+            with open(path, 'r') as jsonfile:
+                for line in tqdm(jsonfile):
+                    datum = json.loads(line)
+
+                    label = datum["gold_label"]
+                    if label in labelsMap:
+                        premises.append(datum["sentence1"])
+                        hypothesis.append(datum["sentence2"])
+                        labels.append(labelsMap[label])
+
+        return premises, hypothesis, labels
+
+    def load_rte(self):
+        print("Loading RTE...")
+        premises   = []
+        hypothesis = []
+        labels     = []
+
+        for path in [RTE_DEV_PATH, RTE_TEST_PATH]:
             with open(path, 'r') as jsonfile:
                 jsonObj = json.load(jsonfile)
                 for item in tqdm(jsonObj['pair']):
@@ -214,29 +242,99 @@ class TextualEntailmentModel(object):
                     label = datum["gold_label"]
                     premises.append(datum["sentence1"])
                     hypothesis.append(datum["sentence2"])
-                    labels.append(self.labelsMap[label])
-        
-        for path in MNLI_PATHS:
-            with open(path, 'r') as jsonfile:
-                for line in tqdm(jsonfile):
-                    datum = json.loads(line)
+                    labels.append(labelsMap[label])
 
-                    label = datum["gold_label"]
-                    if label in self.labelsMap:
-                        premises.append(datum["sentence1"])
-                        hypothesis.append(datum["sentence2"])
-                        labels.append(self.labelsMap[label])
-
-                        
         return premises, hypothesis, labels
 
+    def load_emergent(self):
+        print("Loading EMERGENT...")
+        premises   = []
+        hypothesis = []
+        labels     = []
+
+        with open(EMERGENT_FULL_PATH) as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in tqdm(reader):
+                p = row["articleHeadline"]
+                h = row["claimHeadline"][len("Claim: "):]
+                l = row["articleHeadlineStance"]
+
+                if l == "for":
+                    l = labelsMap["entailment"]
+                elif l == "against":
+                    l = labelsMap["contradiction"]
+                elif l == ["observing", "ignoring"]:
+                    l = labelsMap["neutral"]
+                
+                if type(l) != int:
+                    continue
+
+                premises.append(p)
+                hypothesis.append(h)
+                labels.append(l)
+
+        return premises, hypothesis, labels
+
+    def load_fnc(self):
+        print("Loading FNC...")
+        premises   = []
+        hypothesis = []
+        labels     = []
+
+        fncDataset = {}
+
+        with open(FNC_TRAIN_BODIES_PATH) as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                fncDataset[row["Body ID"]] = {
+                    "articleBody": row["articleBody"]
+                }
+
+        with open(FNC_TRAIN_STANCES_PATH) as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                fncDataset[row["Body ID"]]["headline"] = row["Headline"]
+                fncDataset[row["Body ID"]]["stance"] = row["Stance"]
+
+
+        for i in tqdm(fncDataset.keys()):
+            row = fncDataset[i]
+            p = row["articleBody"]
+            h = row["headline"]
+            l = row["stance"]
+
+            if l == "agree":
+                l = labelsMap["entailment"]
+            elif l == "disagree":
+                l = labelsMap["contradiction"]
+            else:
+                l = labelsMap["neutral"]
+
+            premises.append(p)
+            hypothesis.append(h)
+            labels.append(l)
+
+        return premises, hypothesis, labels
+
+
+    def loadDataset(self):
+        allnli_premises  , allnli_hypothesis,   allnli_labels   = self.load_allnli()
+        rte_premises     , rte_hypothesis,      rte_labels      = self.load_rte()
+        emergent_premises, emergent_hypothesis, emergent_labels = self.load_emergent()
+        fnc_premises     , fnc_hypothesis,      fnc_labels      = self.load_fnc()
+
+        premises = allnli_premises + rte_premises #+ emergent_premises + fnc_premises
+        hypothesis = allnli_hypothesis + rte_hypothesis # + emergent_hypothesis + fnc_hypothesis
+        labels = allnli_labels + rte_labels #+ emergent_labels + fnc_labels
+
+        return premises, hypothesis, labels
+
+
     def loadWordEmbeddings(self):    
-        fasttextFile = FASTTEXT_FILE
+        gloveFile = GLOVE_FILE
         wordEmbeddings = {}
 
-
-
-        with open(fasttextFile, 'r') as file:
+        with open(gloveFile, 'r') as file:
             for line in tqdm(file):
                 values = line.split(' ')
                 word = values[0]
@@ -262,7 +360,7 @@ class TextualEntailmentModel(object):
         return wordEmbeddingMatrix
 
     def createModel(self):
-        (premiseData, hypothesisData, labelsData) = self.loadDataset()
+        premiseData, hypothesisData, labelsData = self.loadDataset()
         wordEmbeddings = self.loadWordEmbeddings()
         embeddingDimension = self.getEmbeddingDim(wordEmbeddings)
 

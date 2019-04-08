@@ -20,6 +20,25 @@ class ParseTreeNode(object):
             return []
         return self.children[relationship]
     
+class ParseTreeNode(object):
+
+    def __init__(self, spacyToken): #spacyToken is the root
+         self.innerToken = spacyToken
+         self.children = {}
+
+    def insertChild(self, spacyToken, relationship):
+        childNode = ParseTreeNode(spacyToken)
+        if relationship in self.children:
+            self.children[relationship].append(childNode)
+        else:
+            self.children[relationship] = [childNode]
+        return childNode
+
+    def retrieveChildren(self, relationship):
+        if relationship not in self.children:
+            return []
+        return self.children[relationship]
+    
 class ParseTree(object):
     def __init__(self, rootToken):
         self.root = ParseTreeNode(rootToken)
@@ -148,7 +167,7 @@ class ParseTree(object):
 
 
     def extractObjectNodes(self, withCCAndConj=False):
-        objectRelationship = ["dobj"]
+        objectRelationship = ["dobj", "acomp"]
         objectNodes = []
         for relationship in objectRelationship:
             objectNodes.extend(self.root.retrieveChildren(relationship))
@@ -230,10 +249,14 @@ class ParseTree(object):
         return actionNodeData
     
     def extractPrepAndPobjNodes(self):
-        results = []
-        prepPobjModifiers = ["prep", "pobj", "pcomp", "agent", "cc", "conj"]
+        lefts = []
+        rights = []
+        prepPobjModifiers = ["prep", "pobj", "pcomp"]
         def _extractPrepPobjDFS(node):
-            results.append(node)
+            if node.innerToken.i < self.root.innerToken.i:
+                lefts.append(node)
+            else:
+                rights.append(node)
             
             if len(pydash.intersection(prepPobjModifiers, node.children.keys)) <= 0:
                 return
@@ -245,7 +268,10 @@ class ParseTree(object):
                     _extractPrepPobjDFS(childNode)
 
         _extractPrepPobjDFS(self.root)
-        return results[1:]
+        return {
+            "lefts": lefts,
+            "rights": rights[1:]
+        }
     
     
     def extractData(self):
@@ -274,15 +300,49 @@ class ParseTree(object):
             dobject = dobject + " " + node.innerToken.text
         dobject = dobject.strip()
         
-        ppObject = ""
-        for node in prepPobjNodes:
-            ppObject = ppObject + " " + node.innerToken.text
-        ppObject = ppObject.strip()
-
+        ppLefts = []
+        ppRights = []
+        
+        skipFlag = False
+        temp = ""        
+        for node in prepPobjNodes['lefts']:
+            if not skipFlag:            
+                if len(node.innerToken.text.split(" ")) > 1:
+                    ppLefts.append(node.innerToken.text)
+                else:
+                    temp = node.innerToken.text
+                    skipFlag = True
+            else:
+                temp = temp + " " + node.innerToken.text
+                ppLefts.append(temp)
+                skipFlag = False
+                temp = ""
+                
+        skipFlag = False
+        temp = ""        
+        for node in prepPobjNodes['rights']:
+            if not skipFlag:            
+                if len(node.innerToken.text.split(" ")) > 1:
+                    ppRights.append(node.innerToken.text)
+                else:
+                    temp = node.innerToken.text
+                    skipFlag = True
+            else:
+                temp = temp + " " + node.innerToken.text
+                ppRights.append(temp)
+                skipFlag = False
+                temp = ""
+        
+        if dobject == "" and len(ppRights) > 0:
+            dobject = ppRights[0]
+            ppRights = ppRights[1:]
+        elif dobject == "" and len(ppLefts) > 0:
+            dobject = ppLefts[0]
+            ppLefts = ppLefts[1:]
+        
         action = ""
         if actionNodesData is not None:
             action = actionNodesData["predicate"]
-            ppObject = (ppObject + " " + actionNodesData["prepPobj"]).strip()
         
         return {
             "predicate": predicate,
@@ -291,5 +351,5 @@ class ParseTree(object):
             "subject": subject,
             "object": dobject,
             "action": action,
-            "prepPobj": ppObject
+            "prepPobj": ppLefts + ppRights
         }
