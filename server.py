@@ -1,8 +1,7 @@
 import pydash
-import utils
 
 import logging
-logging.basicConfig(level=logging.info)
+logging.basicConfig(level="INFO")
 
 from bottle import Bottle, run, request, response
 from nlpengine import NLPEngine
