@@ -1,24 +1,25 @@
 import spacy
 import pydash
 
-from cachetools import cached, LRUCache
-cache = LRUCache(maxsize=1000)
-
 from claim import Claim
 from parseTree import ParseTree, ParseTreeNode
+
+import datetime
+from natty import DateParser
 
 from nlpmodels import nlp_lg
 from nlpmodels import nlp_md
 from nlpmodels import nlp_sm 
 
-class SPOLTExtractor(object):
+class SPOExtractor(object):
 
     def sanitizeText(self, text):
         return text.replace("”", "'") \
                     .replace("“", "'") \
                     .replace("’", "'") \
                     .replace("\"", "'") \
-                    .replace("\n", "")
+                    .replace("\n", "") \
+                    .replace(u'\u200b', ' ').strip()
 
     def isRootPredicate(self, spacyToken):
         return spacyToken.pos_ == "VERB" and spacyToken.dep_ == "ROOT"
@@ -55,10 +56,7 @@ class SPOLTExtractor(object):
             "NORP": [],
             "ORG": [],
             "GPE": [],
-            "LOC": [],
-            "PRODUCT": [],
-            "EVENT": [],
-            "MONEY": [],
+            "LOC": []
         }
         
         sDoc = nlp_lg(sentence)
@@ -68,10 +66,34 @@ class SPOLTExtractor(object):
         return entMap
 
     
+    def extractTimeRange(self, sentence):
+        dp = DateParser(sentence)
+        matches = dp.result()
+
+        if matches == None:
+            return {
+                "low": datetime.datetime.now(),
+                "high": datetime.datetime.now()
+            }
+        
+        matches.sort()
+        
+        if len(matches) == 1:
+            return {
+                "low": matches[0],
+                "high": matches[0]
+            }
+        
+        return {
+            "low": matches[0],
+            "high": matches[-1]
+        } 
+    
     def extractClaims(self, text, debug=False):
         textDoc = nlp_lg(text)
 
         claims = []
+
         for spacySentence in textDoc.sents:
             sanitizedSentence = self.sanitizeText(spacySentence.text)
             isParsed = False
@@ -91,10 +113,12 @@ class SPOLTExtractor(object):
                             saying = self.extractWhatOtherPeopleClaim(spacyToken)
                             if saying is None:
                                 parseTree = ParseTree(spacyToken)
-                                spolt = parseTree.extractData()
-                                entMap = self.extractSentenceEntities(sanitizedSentence)
-                                claim = Claim(spolt, entMap, 0, "", sanitizedSentence)
-                                claims.append(claim)
+                                spo = parseTree.extractData()
+                                if spo != None:
+                                    entMap = self.extractSentenceEntities(sanitizedSentence)
+                                    #timerange = self.extractTimeRange(sanitizedSentence)
+                                    claim = Claim(spo, entMap, None, 0, sanitizedSentence)
+                                    claims.append(claim)
                             else:
                                 result = self.extractClaims(saying["saying"])
                                 for claim in result:
@@ -102,8 +126,11 @@ class SPOLTExtractor(object):
                                     claims.append(claim)            
                         else:
                             parseTree = ParseTree(spacyToken)
-                            spolt = parseTree.extractData()
-                            entMap = self.extractSentenceEntities(sanitizedSentence)
-                            claim = Claim(spolt, entMap, 0, "", sanitizedSentence)
-                            claims.append(claim)
+                            spo = parseTree.extractData()
+                            if spo != None:    
+                                entMap = self.extractSentenceEntities(sanitizedSentence)
+                                #timerange = self.extractTimeRange(sanitizedSentence)
+                                claim = Claim(spo, entMap, None, 0, sanitizedSentence)
+                                claims.append(claim)
         return claims
+        

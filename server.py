@@ -1,11 +1,24 @@
 import pydash
 import utils
 
+import logging
+logging.basicConfig(level=logging.info)
+
 from bottle import Bottle, run, request, response
 from nlpengine import NLPEngine
 
 app = Bottle()
 nlpEngine = NLPEngine()
+
+def createErrorResponse(errMsg):
+    return {
+        "error": "Invalid Request: %s" % errMsg
+    }
+
+def createJSONResponse(data):
+    return {
+        "data": data # python dict
+    }
 
 @app.get('/')
 def baseHandler():
@@ -16,7 +29,7 @@ def analyseHandler():
     body = dict(request.json)
 
     if len(pydash.intersection(["text", "relatedArticles"], body.keys())) != 2:
-        return utils.createErrorResponse("Missing parameters.")
+        return createErrorResponse("Missing parameters.")
 
     text            = body["text"]
     relatedArticles = body["relatedArticles"]
@@ -27,12 +40,12 @@ def analyseHandler():
             "queryHasClaims": False,
             "articlesWithEvidence": []
         }
-        return utils.createJSONResponse(result)
-    else:
-        result = {
-            "queryHasClaims": True,
-            "articlesWithEvidence": analysis
-        }
-        return utils.createJSONResponse(result)
+        return createJSONResponse(result)
+    result = {
+        "queryHasClaims": True,
+        "articlesWithEvidence": analysis
+    }
+    return createJSONResponse(result)
 
+logging.info(f"Server listening on port: {8080}")
 run(app, host='0.0.0.0', port=8080)

@@ -344,6 +344,9 @@ class ParseTree(object):
         if actionNodesData is not None:
             action = actionNodesData["predicate"]
         
+        if subject == "" or object == "":
+            return None
+
         return {
             "predicate": predicate,
             "predicateInverse": predicateInverse,

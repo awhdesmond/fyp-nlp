@@ -5,20 +5,20 @@ import string
 
 from concurrent.futures import ThreadPoolExecutor
 
-from SPOLTExtractor import SPOLTExtractor
+from SPOExtractor import SPOExtractor
 from textualEntailment import TextualEntailmentModel
 
 ENTAILMENT_INDEX = 0
 CONTRADICTION_INDEX = 1
 NEUTRAL_INDEX = 2
 
-ENTAILMENT_THRESHOLD = 0.55
-CONTRADICT_THRESHOLD = 0.55
+ENTAILMENT_THRESHOLD = 0.5
+CONTRADICT_THRESHOLD = 0.6
 
 class NLPEngine(object):
 
     def __init__(self):
-        self.spoltExtractor = SPOLTExtractor()
+        self.spoltExtractor = SPOExtractor()
         self.textEntModel = TextualEntailmentModel()
         self.textEntModel.createModel()
 
@@ -29,24 +29,24 @@ class NLPEngine(object):
             "neutral": []
         }
 
-        titleClaims   = self.spoltExtractor.extractClaims(article["title"].strip())
-        contentClaims = self.spoltExtractor.extractClaims(article["content"].strip())
-        claims = titleClaims + contentClaims
-
+        contentClaims = self.spoltExtractor.extractClaims(article["content"].strip()) 
         relatedClaims = []
-        for c in claims:
-            if c.isRelatedSPOENT(queryClaim):
-                relatedClaims.append(c)
+        
+        for claim in contentClaims:
+            print(claim)
+            print(claim.isRelatedSPOENT(queryClaim))
+            if claim.isRelatedSPOENT(queryClaim):
+                relatedClaims.append(claim)        
+
+
+        print(relatedClaims)
 
         if len(relatedClaims) <= 0:
             return article
 
         for claim in relatedClaims:
-            if claim.spolt['object'] == "" and claim.spolt['prepPobj'] == "":
-                continue
-
-            hypothesis = queryClaim.subPredObj()
-            premise = claim.subPredObj()
+            hypothesis = queryClaim.sentence
+            premise = claim.sentence
 
             textualEntailmentResult = self.textEntModel.predict(premise, hypothesis)
             entailmentProb = round(textualEntailmentResult[ENTAILMENT_INDEX], 2)
@@ -62,10 +62,12 @@ class NLPEngine(object):
             claim.score = textualEntailmentResult.tolist()
 
             if entailmentProb > contradictProb and entailmentProb > neutralProb:
-                article["evidence"]["entailment"].append(claim.serialise())
+                if entailmentProb >= ENTAILMENT_THRESHOLD:
+                    article["evidence"]["entailment"].append(claim.serialise())
 
             if contradictProb > entailmentProb and contradictProb > neutralProb:
-                article["evidence"]["contradiction"].append(claim.serialise())
+                if contradictProb >= CONTRADICT_THRESHOLD:
+                    article["evidence"]["contradiction"].append(claim.serialise())
 
             if neutralProb > entailmentProb and neutralProb > contradictProb:
                 article["evidence"]["neutral"].append(claim.serialise())    
@@ -79,13 +81,14 @@ class NLPEngine(object):
         queryClaim = queryClaims[0]
         articlesWithEvidence = []
 
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            def fn(article):
-                return self._compareQueryWithRelatedArticle(queryClaim, article)
-            articlesWithEvidence = executor.map(fn, relatedArticles)
-            articlesWithEvidence = list(articlesWithEvidence)
+        for article in relatedArticles:
+            result = self._compareQueryWithRelatedArticle(queryClaim, article)
+            articlesWithEvidence.append(result)
 
-            return articlesWithEvidence
+        print("Returning")
+        return articlesWithEvidence
+
+            
 
         
 

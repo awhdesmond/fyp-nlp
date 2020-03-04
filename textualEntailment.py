@@ -206,7 +206,7 @@ class TextualEntailmentModel(object):
         labels     = []
 
         for path in [ALLNLI_DEV_PATH, ALLNLI_TRAIN_PATH]:
-            with open(path, 'r') as jsonfile:
+            with open(path, 'r',  encoding="utf-8") as jsonfile:
                 for line in tqdm(jsonfile):
                     datum = json.loads(line)
 
@@ -225,7 +225,7 @@ class TextualEntailmentModel(object):
         labels     = []
 
         for path in [RTE_DEV_PATH, RTE_TEST_PATH]:
-            with open(path, 'r') as jsonfile:
+            with open(path, 'r',  encoding="utf-8") as jsonfile:
                 jsonObj = json.load(jsonfile)
                 for item in tqdm(jsonObj['pair']):
                     datum = {
@@ -320,8 +320,8 @@ class TextualEntailmentModel(object):
     def loadDataset(self):
         allnli_premises  , allnli_hypothesis,   allnli_labels   = self.load_allnli()
         rte_premises     , rte_hypothesis,      rte_labels      = self.load_rte()
-        emergent_premises, emergent_hypothesis, emergent_labels = self.load_emergent()
-        fnc_premises     , fnc_hypothesis,      fnc_labels      = self.load_fnc()
+        # emergent_premises, emergent_hypothesis, emergent_labels = self.load_emergent()
+        # fnc_premises     , fnc_hypothesis,      fnc_labels      = self.load_fnc()
 
         premises = allnli_premises + rte_premises #+ emergent_premises + fnc_premises
         hypothesis = allnli_hypothesis + rte_hypothesis # + emergent_hypothesis + fnc_hypothesis
@@ -334,7 +334,7 @@ class TextualEntailmentModel(object):
         gloveFile = GLOVE_FILE
         wordEmbeddings = {}
 
-        with open(gloveFile, 'r') as file:
+        with open(gloveFile, 'r', encoding="utf-8") as file:
             for line in tqdm(file):
                 values = line.split(' ')
                 word = values[0]

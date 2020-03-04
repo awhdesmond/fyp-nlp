@@ -1,110 +1,139 @@
+import json
+
 from nlpmodels import nlp_lg
 from nlpmodels import nlp_md
-from nlpmodels import nlp_sm
-
-SUBJECTS_COSINE_SIMILARITY_THRESHOLD = 0.75
+from nlpmodels import nlp_sm 
+from nlpmodels import rf
 
 class Claim():
-    def __init__(self, spolt, ents, score, claimer, sentence):
-        self.spolt = spolt
-        self.ents = ents
-        self.score = score
-        self.claimer = claimer
-        self.sentence = sentence
+    
+    def __init__(self, spo, ents, timerange, score, sentence):
+        self.spo       = spo
+        self.ents      = ents
+        self.timerange = timerange
+        self.score     = score
+        self.sentence  = sentence
         
     def serialise(self):
-        return {
+        data = {
             "score": self.score,
-            "claimer": self.claimer,
             "sentence": self.sentence,
-            "spolt": self.spolt,
+            "spo": self.spo,
             "ents": self.ents
         }
-    
+        return data
+        
+
     def cosineSimilarity(self, subA, subB):
         subADoc = nlp_lg(subA)
         subBDoc = nlp_lg(subB)
         return subADoc.similarity(subBDoc)
-
-    def subPredObj(self):
-        result = self.spolt["subject"]
-        
-        if self.spolt["predicateInverse"] != "":
-            result = result + " " + self.spolt["predicateInverse"]
-            
-        if self.spolt["predicate"] != "":
-            result = result + " " + self.spolt["predicate"]
-        
-        if self.spolt["object"] != "":
-            result = result + " " + self.spolt["object"]
-            
-        return result
     
-    def spoltString(self, ppFlag=False):
-        result = self.spolt["subject"]
-        
-        if self.spolt["predicateInverse"] != "":
-            result = result + " " + self.spolt["predicateInverse"]
-            
-        if self.spolt["predicate"] != "":
-            result = result + " " + self.spolt["predicate"]
-        
-        if self.spolt["object"] != "":
-            result = result + " " + self.spolt["object"]
-            
-        if self.spolt["action"] != "":
-            result = result + " " + self.spolt["action"]
-            
-        if self.spolt["prepPobj"] != "" and ppFlag:
-            result = result + " " + " ".join(self.spolt["prepPobj"])
-            
-        return result
-        
-    def isRelatedPure(self, other):
-        return self.cosineSimilarity(self.sentence, other.sentence) > SUBJECTS_COSINE_SIMILARITY_THRESHOLD
 
-    def isRelatedSPO(self, other):
-        score1 = self.cosineSimilarity(self.spoltString(), other.spoltString())
-        score2 = self.cosineSimilarity(self.spoltString(ppFlag=True), other.spoltString())
-        score3 = self.cosineSimilarity(self.spoltString(), other.spoltString(ppFlag=True))
-        score4 = self.cosineSimilarity(self.spoltString(ppFlag=True), other.spoltString(ppFlag=True))
-        return max([score1, score2, score3, score4]) >  SUBJECTS_COSINE_SIMILARITY_THRESHOLD
-
+    def extractNotNamedEntitiesNouns(self):
+        sDoc = nlp_lg(self.sentence)
+        nouns = []
+        
+        for token in sDoc:
+            if (token.pos_ in ["NOUN", "PROPN", "NUM"]) and token.ent_type_ == "":
+                nouns.append(token.text)
+                
+        return " ".join(nouns)
     
-    def isRelatedSPOENT(self, other, threshold=SUBJECTS_COSINE_SIMILARITY_THRESHOLD):        
+    def extractAdjectives(self):
+        sDoc = nlp_lg(self.sentence)
+        adjs = []
+        
+        for token in sDoc:
+            if (token.pos_ in ["ADJ"]) and token.ent_type_ == "":
+                adjs.append(token.text)
+                
+        return " ".join(adjs)
+    
+    def extractEnts(self):
         entsKeys = [
             "PERSON",
             "NORP",
             "ORG",
             "GPE",
             "LOC",
-            "PRODUCT",
-            "EVENT",
-            "MONEY",
         ]
         
-        scores = {}
-        totalScore = 0
+        entString = ""
         for idx, key in enumerate(entsKeys):            
-            selfEntString = " ".join(self.ents[key])
-            otherEntString = " ".join(other.ents[key])
-            scores[key] = self.cosineSimilarity(selfEntString, otherEntString)
-            totalScore += scores[key]
-        
-        gpeScore = scores["GPE"]
-        if gpeScore < 0.65:
-            return False
-        
-        locScore = scores["LOC"]
-        if locScore < 0.5:
-            return False
+            entString += " " + " ".join(self.ents[key])
 
-        if self.isRelatedSPO(other) < 0.5:
-            return False
-        
-        avgScore = (totalScore + self.isRelatedSPO(other)) / (len(entsKeys) + 1)
-        return (avgScore > threshold)
+        return entString
     
+    def extractVerbs(self):
+        sDoc = nlp_lg(self.sentence)
+        verbs = []
         
+        for token in sDoc:
+            if token.pos_ == "VERB":
+                verbs.append(token.text)
+                
+        return " ".join(verbs)
+        
+    def generateFeatureVector(self, other):
+        
+        gpeCosine      = self.cosineSimilarity(" ".join(self.ents["GPE"]), " ".join(other.ents["GPE"]))
+        norpCosine     = self.cosineSimilarity(" ".join(self.ents["NORP"]), " ".join(other.ents["NORP"]))
+        personCosine   = self.cosineSimilarity(" ".join(self.ents["PERSON"]), " ".join(other.ents["PERSON"]))
+        orgCosine      = self.cosineSimilarity(" ".join(self.ents["ORG"]), " ".join(other.ents["ORG"]))
+        entsCosine     = self.cosineSimilarity(self.extractEnts(), other.extractEnts())
+        nounsCosine    = self.cosineSimilarity(self.extractNotNamedEntitiesNouns(), other.extractNotNamedEntitiesNouns())
+        adjsCosine     = self.cosineSimilarity(self.extractAdjectives(), other.extractAdjectives())
+        verbCosine     = self.cosineSimilarity(self.extractVerbs(), other.extractVerbs())
+        sentenceCosine = self.cosineSimilarity(self.sentence, other.sentence)
+    
+        return [gpeCosine, entsCosine, nounsCosine, verbCosine, sentenceCosine]
+    
+
+    def spoString(self, ppFlag=False):
+        result = self.spo["subject"]
+        
+        if self.spo["predicateInverse"] != "":
+            result = result + " " + self.spo["predicateInverse"]
+            
+        if self.spo["predicate"] != "":
+            result = result + " " + self.spo["predicate"]
+        
+        if self.spo["object"] != "":
+            result = result + " " + self.spo["object"]
+            
+        if self.spo["action"] != "":
+            result = result + " " + self.spo["action"]
+            
+        if self.spo["prepPobj"] != "" and ppFlag:
+            result = result + " " + " ".join(self.spo["prepPobj"])
+            
+        return result
+        
+    
+    def isRelatedPure(self, other, threshold):
+        return self.cosineSimilarity(self.sentence, other.sentence) >= threshold
+    
+
+    def isRelatedMagicSPOENT(self, other, time=False, threshold=0.5):        
+        if time:
+            overlap = (self.timerange["high"] >= other.timerange["low"]) or (self.timerange["low"] <= other.timerange["high"])
+            if not overlap:
+                return False
+              
+        entScore = self.cosineSimilarity(self.extractEnts(), other.extractEnts())
+        
+        if entScore < 0.55:
+            return False
+                
+        nounScore = self.cosineSimilarity(self.extractNotNamedEntitiesNouns(), other.extractNotNamedEntitiesNouns())
+        
+        return nounScore >= 0.6
+        
+    def isRelatedSPOENT(self, other):
+        fv = self.generateFeatureVector(other)
+        return rf.predict([fv])[0] == 1
+
+
     def __repr__(self):
         return self.sentence + " (" + str(self.score) + ")"
