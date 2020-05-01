@@ -3,14 +3,12 @@ from typing import Dict
 
 import spacy
 from pydantic import BaseModel
-from entailment.nlp import parseTree
+from entailment.nlp import pos_tree
 
 class Claim(BaseModel):
     """
-    Represents a natural sentence with SPOLT metadata
+    Represents a natural sentence with SPOL metadata
     """
-
-    spo: Dict
     entities: Dict
     score: float
     sentence: str
@@ -202,34 +200,6 @@ class ClaimExtractor:
         for span in spans:
             span.merge()
 
-    def extract_claimer_saying(self, token: spacy.tokens.Token):
-        """Extract the claims made by a claimer in the original
-        sentence using ccomp (clausal complement)
-
-        Returns {
-            text (str): the text claimed by the claimer
-            claimer (str): the claimer
-        }
-        """
-        parse_tree = parseTree.ParseTree(token)
-        ccomp_child = parse_tree.root.retrieveChildren("ccomp")
-
-        if not ccomp_child:
-            return None
-
-        claimer_nodes = parse_tree.extractSubjectNodes(withCCAndConj=True)
-
-        subject = " ".join([node.innerToken.text for node in claimer_nodes])
-        subject = subject.strip()
-
-        text = " ".join([x.text for x in ccomp_child[0].innerToken.subtree])
-        text = text.strip()
-
-        return {
-            "text": text,
-            "claimer": subject
-        }
-
     def extract_sentence_entities(self, sentence: str):
         """
         Extracts the named entities present in the sentence
@@ -251,6 +221,22 @@ class ClaimExtractor:
 
         return entities_map
 
+    def extract_claimer_saying(self, token: spacy.tokens.Token):
+        """Extract the claims made by a claimer in the original
+        sentence using ccomp (clausal complement)
+
+        Returns the saying claimed by the claimer
+        """
+        tree = pos_tree.PartOfSpeechTree(token)
+        ccomp_child = tree.root.retrieve_children("ccomp")
+
+        if not ccomp_child:
+            return None
+
+        saying = " ".join([x.text for x in ccomp_child[0].innerToken.subtree])
+        saying = saying.strip()
+        return saying
+
     def extract_claim(
         self,
         sentence: spacy.tokens.Span,
@@ -259,25 +245,25 @@ class ClaimExtractor:
         """
         Return the claim by parsing the token's tree
         """
-        parse_tree = parseTree.ParseTree(token)
-        spo = parse_tree.extractData()
-        if not spo:
+        tree = pos_tree.PartOfSpeechTree(token)
+
+        if not tree.has_spo_structure:
             return None
 
-        entMap = self.extract_sentence_entities(sentence.text)
-        claim = Claim(spo, entMap, None, 0, sentence.text)
+        entities_map = self.extract_sentence_entities(sentence.text)
+        claim = Claim(entities_map, 0, sentence.text)
         return claim
 
     def extract_claims_from_sentence(self, sentence: spacy.tokens.Span):
         """
         Extract claims from the sentence in the following scenarios:
 
-            1. The root predicate could be a claimer verb (e.g say) which
-            means the actual claim root token is a child of this token.
-                1.1: ccomp is not present, we just try to parse the current token
-                1.2: ccomp is present, and we parse the actual ccomp
+        1. The root predicate could be a claimer verb (e.g say) which
+        means the actual claim root token is a child of this token.
+            1.1: ccomp is not present, we just try to parse the current token
+            1.2: ccomp is present, and we parse the actual ccomp
 
-            2. The root verb is the actual root predicate of the claim.
+        2. The root verb is the actual root predicate of the claim.
 
         Returns a list of claims that are present in the sentence
         """
@@ -299,9 +285,8 @@ class ClaimExtractor:
                     continue
 
                 # 1.2: clausal complement is present, parse the complement itself
-                result = self.extract_claims(saying["text"])
+                result = self.extract_claims(saying)
                 for claim in result:
-                    claim.claimer = saying["claimer"]
                     claims.append(claim)
                 continue
 
@@ -309,7 +294,6 @@ class ClaimExtractor:
             claim = self.extract_claim(sentence, token)
             if claim:
                 claims.append(claim)
-            claims.append(claim)
 
         return claims
 
