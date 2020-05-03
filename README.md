@@ -38,12 +38,6 @@ General:
                         Environment to run as (default LOCAL)
   --env-path ENV_PATH   Environment to run as (default config/.env)
 
-Gunicorn:
+Waitress:
   --bind BIND           The socket to bind. (default 0.0.0.0:5000)
-  --worker-class WORKER_CLASS
-                        The type of workers to use. (default
-                        egg:meinheld#gunicorn_worker)
-  --workers WORKERS     The number of worker processes for handling requests.
-                        0 means using the following formula: CPU cores*2+1.
-                        (default 0)
 ```
