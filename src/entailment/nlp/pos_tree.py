@@ -7,17 +7,17 @@ class PartOfSpeechTreeNode:
     Part-of-speech tree node
     """
 
-    def __init__(self, token: spacy.tokens.Token):
+    def __init__(self, token: spacy.tokens.token.Token):
         self.token = token
         self.children = {}
 
-    def insert_child(self, token: spacy.tokens.Token):
+    def insert_child(self, token: spacy.tokens.token.Token):
         """
         Insert a token as a child to the node
         """
         child_node = PartOfSpeechTreeNode(token)
         self.children.setdefault(token.dep_, [])
-        self.children.append(child_node)
+        self.children[token.dep_].append(child_node)
         return child_node
 
     def retrieve_children(self, relationship: str):
@@ -36,7 +36,7 @@ class PartOfSpeechTree:
         root (PartOfSpeechTreeNode): the root node of the tree
     """
 
-    def __init__(self, token: spacy.tokens.Token):
+    def __init__(self, token: spacy.tokens.token.Token):
         self.root = PartOfSpeechTreeNode(token)
         self._init_tree()
 
@@ -50,7 +50,8 @@ class PartOfSpeechTree:
 
             if child.dep_ == "appos":
                 for appos_child in child.children:
-                    self._process_node(appos_child, node_queue)
+                    child_node = PartOfSpeechTreeNode(appos_child)
+                    self._process_node(child_node, node_queue)
                 continue
 
             child_node = node.insert_child(child)

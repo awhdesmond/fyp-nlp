@@ -7,12 +7,11 @@ class ListArticlesFilter(BaseModel):
 
 
 class Article(BaseModel):
-
-    _id: str
+    id: str
     source: str
     url: str
-    image_url: str
+    imageurl: str = None
     title: str
     author: str
-    published_date: str
+    publishedDate: str
     content: str

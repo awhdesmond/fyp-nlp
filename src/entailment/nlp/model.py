@@ -1,109 +1,40 @@
-import collections
-import time
-import csv
 import json
-import os
-from os.path import join
+import codecs
+from os import path
+from typing import List, Dict
 
 import numpy as np
-from tqdm import tqdm
-
-from keras.preprocessing.text import Tokenizer
-from keras.preprocessing.sequence import pad_sequences
-from keras.utils import to_categorical
-from keras.models import Sequential, Model, load_model
-from keras.layers import Embedding, Dense, Input, Dropout, Reshape, BatchNormalization, TimeDistributed, Lambda, Layer, LSTM, Bidirectional, Convolution1D, GRU, add, concatenate
-from keras.optimizers import RMSprop, Adam, SGD, Adagrad
-from keras.callbacks import Callback, ModelCheckpoint, TensorBoard, BaseLogger, ReduceLROnPlateau
 
 import tensorflow as tf
+from keras.preprocessing.text import Tokenizer
+from keras.preprocessing.sequence import pad_sequences
+from keras.models import Model
+from keras.optimizers import Adam
+from keras.layers import Embedding, Dense, Input, Dropout, Lambda, Layer, LSTM, Bidirectional, concatenate
 
-# CONSTANTS
-DATA_FOLDER = "./DATA_FOLDER"
+import log
+logger = log.init_stream_logger(__name__)
 
-ALLNLI_DEV_PATH = join(DATA_FOLDER, "AllNLI/dev.jsonl")  
-ALLNLI_TRAIN_PATH = join(DATA_FOLDER, "AllNLI/train.jsonl")  
-ALLNLI_TEST_PATH = join(DATA_FOLDER, "AllNLI/test.jsonl")  
-
-SNLI_DEV_PATH = join(DATA_FOLDER, "snli_1.0/snli_1.0_dev.jsonl")  
-SNLI_TRAIN_PATH = join(DATA_FOLDER, "snli_1.0/snli_1.0_train.jsonl")  
-SNLI_TEST_PATH = join(DATA_FOLDER, "snli_1.0/snli_1.0_test.jsonl")  
-
-MULTINLI_MATCH_PATH = join(DATA_FOLDER, "multinli_1.0/multinli_1.0_dev_matched.jsonl") 
-MULTINLI_MISMATCH_PATH = join(DATA_FOLDER, "multinli_1.0/multinli_1.0_dev_mismatched.jsonl") 
-MULTINLI_TRAIN_PATH = join(DATA_FOLDER, "multinli_1.0/multinli_1.0_train.jsonl")  
-
-RTE_DEV_PATH = join(DATA_FOLDER, "rte_1.0/rte.json")
-RTE_TEST_PATH = join(DATA_FOLDER, "rte_1.0/rte_test.json")
-
-FNC_TRAIN_STANCES_PATH = join(DATA_FOLDER, "fnc-1/train_stances.csv")
-FNC_TRAIN_BODIES_PATH = join(DATA_FOLDER, "fnc-1/train_bodies.csv")
-FNC_TEST_STANCES_PATH = join(DATA_FOLDER, "fnc-1/competition_test_stances.csv")
-FNC_TEST_BODIES_PATH = join(DATA_FOLDER, "fnc-1/competition_test_bodies.csv")
-
-EMERGENT_FULL_PATH = join(DATA_FOLDER, "emergent/url-versions-2015-06-14.csv")
-
-GLOVE_FILE = join(DATA_FOLDER, "glove.840B.300d.txt")
-MODEL_WEIGHTS = join(DATA_FOLDER, "glove-full-glove-full-adam-checkpoint-weights.05-0.80.hdf5")
-
-labelsMap = {
-    "entailment": 0,
-    "contradiction": 1,
-    "neutral": 2
-}
-
-lr = 0.001
-lr_decay = 1e-4
-epochs = 10
-batch_size = 16
-eps = 1e-6
-
-model_name = "glove-full"
-
-def precision(y_true, y_pred):
-    true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
-    predicted_positives = K.sum(K.round(K.clip(y_pred, 0, 1)))
-    precision = true_positives / (predicted_positives + K.epsilon())
-    return precision
-
-def recall(y_true, y_pred):
-    true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
-    possible_positives = K.sum(K.round(K.clip(y_true, 0, 1)))
-    recall = true_positives / (possible_positives + K.epsilon())
-    return recall
-
-def fbeta_score(y_true, y_pred, beta=1):
-    if K.sum(K.round(K.clip(y_true, 0, 1))) == 0:
-        return 0
-    p = precision(y_true, y_pred)
-    r = recall(y_true, y_pred)
-    bb = beta ** 2
-    fbeta_score = (1 + bb) * (p * r) / (bb * p + r + K.epsilon())
-    return fbeta_score
+##################
+# Helper Methods #
+##################
 
 def cosine_distance(y1, y2):
-    mult =  tf.multiply(y1, y2)
-    cosine_numerator = tf.reduce_sum( mult, axis = -1)
-    y1_norm = tf.sqrt(tf.maximum(tf.reduce_sum(tf.square(y1), axis=-1 ), eps) ) 
-    y2_norm = tf.sqrt(tf.maximum(tf.reduce_sum(tf.square(y2), axis=-1 ), eps) ) 
+    mult = tf.multiply(y1, y2)
+    cosine_numerator = tf.reduce_sum(mult, axis=-1)
+    y1_norm = tf.sqrt(tf.maximum(tf.reduce_sum(tf.square(y1), axis=-1), 1e-6))
+    y2_norm = tf.sqrt(tf.maximum(tf.reduce_sum(tf.square(y2), axis=-1), 1e-6))
     return cosine_numerator / y1_norm / y2_norm
 
 def cal_relevancy_matrix(text_vector, hypo_vector):
-    text_vector_tmp = tf.expand_dims(text_vector, 1) # [batch_size, 1, question_len, dim]
-    hypo_vector_tmp = tf.expand_dims(hypo_vector, 2) # [batch_size, passage_len, 1, dim]
-    relevancy_matrix = cosine_distance(text_vector_tmp, hypo_vector_tmp) # [batch_size, passage_len, question_len]
-    return relevancy_matrix
-
-def mask_relevancy_matrix(relevancy_matrix, text_mask, hypo_mask):
-    relevancy_matrix = tf.multiply(relevancy_matrix, K.expand_dims(text_mask, 1))
-    relevancy_matrix = tf.multiply(relevancy_matrix, K.expand_dims(hypo_mask, 2))
+    text_vector_tmp = tf.expand_dims(text_vector, 1)
+    hypo_vector_tmp = tf.expand_dims(hypo_vector, 2)
+    relevancy_matrix = cosine_distance(text_vector_tmp, hypo_vector_tmp)
     return relevancy_matrix
 
 def max_mean_pooling(repres, cosine_matrix):
-    
-    repres.append(tf.reduce_max(cosine_matrix, axis = 2, keep_dims = True))
-    repres.append(tf.reduce_mean(cosine_matrix, axis = 2, keep_dims = True))
-
+    repres.append(tf.reduce_max(cosine_matrix, axis=2, keep_dims=True))
+    repres.append(tf.reduce_mean(cosine_matrix, axis=2, keep_dims=True))
     return repres
 
 def matching_layer(inputs):
@@ -114,46 +45,39 @@ def matching_layer(inputs):
 
     max_mean_pooling(representation, forward_relevancy_matrix)
     max_mean_pooling(representation, backward_relevancy_matrix)
-    
+
     return representation
 
-##
-## MatchLayer
-##
+
 class MatchLayer(Layer):
+    """
+    MatchLayer
+    """
 
     def __init__(self, dim, seq_length, **kwargs):
         super(MatchLayer, self).__init__(**kwargs)
         self.supports_masking = True
         self.dim = dim
         self.seq_length = seq_length
-        
+
     def build(self, input_shape):
         if not isinstance(input_shape, list):
-            raise ValueError('`MatchLayer` layer should be called '
-                             'on a list of inputs')
-        
+            raise ValueError('MatchLayer layer should be called on a list of inputs')
+
         if all([shape is None for shape in input_shape]):
             return
-        
+
         super(MatchLayer, self).build(input_shape)  # Be sure to call this somewhere!
 
     def call(self, inputs):
-        if not isinstance(inputs, list):
-            raise ValueError('A `MatchLayer` layer should be called ')
-        
         return matching_layer(inputs)
-    
+
     def compute_output_shape(self, input_shape):
-        if not isinstance(input_shape, list):
-            raise ValueError('A `MatchLayer` layer should be called '
-                             'on a list of inputs.')
-        
         input_shapes = input_shape
         output_shape = list(input_shapes[0])
-                             
-        return [ (None, output_shape[1] , 1) ] * 4 
-    
+
+        return [(None, output_shape[1], 1)] * 4
+
     def get_config(self):
         config = {
             'dim': self.dim,
@@ -162,313 +86,288 @@ class MatchLayer(Layer):
         base_config = super(MatchLayer, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
-##
-## MaxPoolingLayer
-##
+
 class MaxPoolingLayer(Layer):
+    """
+    MaxPoolingLayer
+    """
 
     def __init__(self, **kwargs):
         super(MaxPoolingLayer, self).__init__(**kwargs)
-        
+
     def build(self, input_shape):
         super(MaxPoolingLayer, self).build(input_shape)
-    
+
     def call(self, inputs):
         return max_mean_pooling([], inputs)
-    
-    def compute_output_shape(self, input_shape):            
+
+    def compute_output_shape(self, input_shape):
         output_shape = list(input_shape)
-        return [ (None, output_shape[1] , 1) ] * 2
-    
+        return [(None, output_shape[1], 1)] * 2
+
     def compute_mask(self, inputs, mask):
         return [mask, mask]
 
-##
-## TextualEntailmentModel
-##
-class TextualEntailmentModel(object):
 
-    labels =  ["entailment", "contradiction", "neutral"]
-    labelsMap = {
+class TextualEntailmentModel:
+    """
+    Entailment model for predicting the entailment relationship between
+    a hypothesis and a premise
+
+    Attributes:
+        data_folder: the base folder for storing all data and model files
+        allnli_paths: AllNLI dataset
+        rte_paths: RTE dataset
+        model_weights: pre-trained model weights
+        embeddings_file: GLoVE embeddings file
+    """
+
+    labels_map = {
         "entailment": 0,
         "contradiction": 1,
         "neutral": 2
     }
 
-    def __init__(self):
+    def __init__(
+        self,
+        data_folder: str,
+        allnli_paths: List[str],
+        rte_paths: List[str],
+        model_weights: str,
+        embeddings_file: str
+    ):
+        self.data_folder = data_folder
+        self.allnli_paths = allnli_paths
+        self.rte_paths = rte_paths
+        self.model_weights = model_weights
+        self.embeddings_file = embeddings_file
+
         self.tokenizer = None
-        self.maxSeqLen = 0
+        self.max_seq_len = 0
 
-    def load_allnli(self):
-        print("Loading AllNLI...")
-        premises   = []
+    @property
+    def word_embedding_path(self):
+        return path.join(self.data_folder, self.embeddings_file)
+
+    @property
+    def allnli_data_paths(self):
+        return [
+            path.join(self.data_folder, allnli_path)
+            for allnli_path in self.allnli_paths
+        ]
+
+    @property
+    def rte_data_paths(self):
+        return [
+            path.join(self.data_folder, rte_path)
+            for rte_path in self.rte_paths
+        ]
+
+    def load_word_embeddings(self):
+        """
+        Load GLoVE word embeddings file
+
+        Returns a dict of {str: [float]}
+        """
+
+        logger.info(f"Loading word embeddings from {self.word_embedding_path}")
+
+        with codecs.open(self.word_embedding_path + '.vocab', "r") as f_in:
+            index2word = [line.strip() for line in f_in]
+        wv = np.load(self.word_embedding_path + '.npy')
+
+        embeddings = {}
+        for i, w in enumerate(index2word):
+            embeddings[w] = wv[i]
+        return embeddings
+
+    def load_data(self):
+        """
+        Load the data set from different datasets
+
+        Returns a list of strings which are sentences in our corpus
+        """
+        premises = []
         hypothesis = []
-        labels     = []
 
-        for path in [ALLNLI_DEV_PATH, ALLNLI_TRAIN_PATH]:
-            with open(path, 'r',  encoding="utf-8") as jsonfile:
-                for line in tqdm(jsonfile):
+        for data_path in self.allnli_data_paths:
+            with open(data_path, "r") as jsonfile:
+                logger.info(f"Loading ALLNLI dataset: {data_path}")
+                for line in jsonfile:
                     datum = json.loads(line)
-
-                    label = datum["gold_label"]
-                    if label in labelsMap:
-                        premises.append(datum["sentence1"])
-                        hypothesis.append(datum["sentence2"])
-                        labels.append(labelsMap[label])
-
-        return premises, hypothesis, labels
-
-    def load_rte(self):
-        print("Loading RTE...")
-        premises   = []
-        hypothesis = []
-        labels     = []
-
-        for path in [RTE_DEV_PATH, RTE_TEST_PATH]:
-            with open(path, 'r',  encoding="utf-8") as jsonfile:
-                jsonObj = json.load(jsonfile)
-                for item in tqdm(jsonObj['pair']):
-                    datum = {
-                        'sentence1': item['t'],
-                        'sentence2': item['h'],
-                    }
-                    if item['-entailment'] == "YES":
-                        datum['gold_label'] = "entailment"
-                    elif item['-entailment'] == "NO":
-                        datum['gold_label'] = "contradiction"
-                    else:
-                        datum['gold_label'] = "neutral"
-                    
-                    label = datum["gold_label"]
+                    if datum["gold_label"] not in TextualEntailmentModel.labels_map:
+                        continue
                     premises.append(datum["sentence1"])
                     hypothesis.append(datum["sentence2"])
-                    labels.append(labelsMap[label])
 
-        return premises, hypothesis, labels
+        for data_path in self.rte_data_paths:
+            with open(data_path, "r") as jsonfile:
+                logger.info(f"Loading RTE dataset: {data_path}")
+                jsonObj = json.load(jsonfile)
+                for item in jsonObj['pair']:
+                    premises.append(item['t'])
+                    hypothesis.append(item['h'])
 
-    def load_emergent(self):
-        print("Loading EMERGENT...")
-        premises   = []
-        hypothesis = []
-        labels     = []
+        return premises, hypothesis
 
-        with open(EMERGENT_FULL_PATH) as csvfile:
-            reader = csv.DictReader(csvfile)
-            for row in tqdm(reader):
-                p = row["articleHeadline"]
-                h = row["claimHeadline"][len("Claim: "):]
-                l = row["articleHeadlineStance"]
+    def create_word_embedding_matrix(
+        self,
+        word_embeddings: Dict,
+        word_map: Dict,
+        num_words_in_corpus: int,
+        embedding_dimension: int,
+    ):
+        """
+        Creates a word embedding matrix mapping word index
+        to its embedding vector
+        """
+        logger.info("Creating word embedding matrix")
 
-                if l == "for":
-                    l = labelsMap["entailment"]
-                elif l == "against":
-                    l = labelsMap["contradiction"]
-                elif l == ["observing", "ignoring"]:
-                    l = labelsMap["neutral"]
-                
-                if type(l) != int:
-                    continue
+        matrix = np.random.random((num_words_in_corpus + 1, embedding_dimension))
+        for word, idx in word_map.items():
+            embedding_vec_for_word = word_embeddings.get(word)
+            if embedding_vec_for_word is not None:
+                matrix[idx] = embedding_vec_for_word
 
-                premises.append(p)
-                hypothesis.append(h)
-                labels.append(l)
+        return matrix
 
-        return premises, hypothesis, labels
+    def create_model(self):
+        """
+        Builds the BiMPM entailment model
+        """
 
-    def load_fnc(self):
-        print("Loading FNC...")
-        premises   = []
-        hypothesis = []
-        labels     = []
+        # 1. Load our corpus
+        premises, hypotheses = self.load_data()
 
-        fncDataset = {}
+        # 2. Load the word embeddings
+        word_embeddings = self.load_word_embeddings()
+        num_words_in_embeddings = len(word_embeddings)
+        embedding_dimension = 300
 
-        with open(FNC_TRAIN_BODIES_PATH) as csvfile:
-            reader = csv.DictReader(csvfile)
-            for row in reader:
-                fncDataset[row["Body ID"]] = {
-                    "articleBody": row["articleBody"]
-                }
+        allSentences = premises + hypotheses
 
-        with open(FNC_TRAIN_STANCES_PATH) as csvfile:
-            reader = csv.DictReader(csvfile)
-            for row in reader:
-                fncDataset[row["Body ID"]]["headline"] = row["Headline"]
-                fncDataset[row["Body ID"]]["stance"] = row["Stance"]
-
-
-        for i in tqdm(fncDataset.keys()):
-            row = fncDataset[i]
-            p = row["articleBody"]
-            h = row["headline"]
-            l = row["stance"]
-
-            if l == "agree":
-                l = labelsMap["entailment"]
-            elif l == "disagree":
-                l = labelsMap["contradiction"]
-            else:
-                l = labelsMap["neutral"]
-
-            premises.append(p)
-            hypothesis.append(h)
-            labels.append(l)
-
-        return premises, hypothesis, labels
-
-
-    def loadDataset(self):
-        allnli_premises  , allnli_hypothesis,   allnli_labels   = self.load_allnli()
-        rte_premises     , rte_hypothesis,      rte_labels      = self.load_rte()
-        # emergent_premises, emergent_hypothesis, emergent_labels = self.load_emergent()
-        # fnc_premises     , fnc_hypothesis,      fnc_labels      = self.load_fnc()
-
-        premises = allnli_premises + rte_premises #+ emergent_premises + fnc_premises
-        hypothesis = allnli_hypothesis + rte_hypothesis # + emergent_hypothesis + fnc_hypothesis
-        labels = allnli_labels + rte_labels #+ emergent_labels + fnc_labels
-
-        return premises, hypothesis, labels
-
-
-    def loadWordEmbeddings(self):    
-        gloveFile = GLOVE_FILE
-        wordEmbeddings = {}
-
-        with open(gloveFile, 'r', encoding="utf-8") as file:
-            for line in tqdm(file):
-                values = line.split(' ')
-                word = values[0]
-                embedding = np.asarray(values[1:], dtype="float32")
-                wordEmbeddings[word] = embedding
-
-        return wordEmbeddings
-
-    def getEmbeddingDim(self, wordEmbeddings):
-        return len(wordEmbeddings['a'])
-
-        
-    def createWordEmbeddingMatrix(self, wordEmbeddings, wordMap, numWordsInCorpus, embeddingDim):
-        wordEmbeddingMatrix = np.random.random((numWordsInCorpus + 1, embeddingDim))
-
-        validEmbeddings = 0
-        for word, idx in wordMap.items():
-            embeddingVectorForWord = wordEmbeddings.get(word)
-            if embeddingVectorForWord is not None:
-                wordEmbeddingMatrix[idx] = embeddingVectorForWord
-                validEmbeddings += 1
-        
-        return wordEmbeddingMatrix
-
-    def createModel(self):
-        premiseData, hypothesisData, labelsData = self.loadDataset()
-        wordEmbeddings = self.loadWordEmbeddings()
-        embeddingDimension = self.getEmbeddingDim(wordEmbeddings)
-
-        numWords = len(wordEmbeddings)
-        allSentences = premiseData + hypothesisData
-
-        # Create word map from corpus (i.e training data)
-        self.tokenizer = Tokenizer(num_words=numWords)
+        # 3. Initialise Keras Text Tokenizer
+        self.tokenizer = Tokenizer(num_words=num_words_in_embeddings)
         self.tokenizer.fit_on_texts(allSentences)
-        premisesWordSequences = self.tokenizer.texts_to_sequences(premiseData)
-        hypothesisWordSequences = self.tokenizer.texts_to_sequences(hypothesisData)
 
-        wordMap = self.tokenizer.word_index # mapping of a word to its index
+        # 4. Creates the word embedding matrix
+        word_index = self.tokenizer.word_index
+        num_words_in_corpus = min(num_words_in_embeddings, len(word_index))
 
-        numWordsInCorpus = min(numWords, len(wordMap))
+        word_embedding_matrix = self.create_word_embedding_matrix(
+            word_embeddings,
+            word_index,
+            num_words_in_corpus,
+            embedding_dimension
+        )
 
-        wordEmbeddingMatrix = self.createWordEmbeddingMatrix(wordEmbeddings, wordMap, numWordsInCorpus, embeddingDimension)
+        # 5. Find the max seq len of the corpus
+        prem_seqs = self.tokenizer.texts_to_sequences(premises)
+        hypo_seqs = self.tokenizer.texts_to_sequences(hypotheses)
+        longest_prem = 0
+        for sentence in prem_seqs:
+            longest_prem = max(longest_prem, len(sentence))
+        longest_hypo = 0
+        for sentence in hypo_seqs:
+            longest_hypo = max(longest_hypo, len(sentence))
+        self.max_seq_len = max(longest_prem, longest_hypo)
 
-        longestPremiseWordCount = 0
-        for sentence in premisesWordSequences:
-            longestPremiseWordCount = max(longestPremiseWordCount, len(sentence))
+        logger.info(f"Max Seq Length: {self.max_seq_len}")
 
-        longestHypoWordCount = 0
-        for sentence in hypothesisWordSequences:
-            longestHypoWordCount = max(longestHypoWordCount, len(sentence))
-            
-        self.maxSeqLen = max(longestPremiseWordCount, longestHypoWordCount)
+        premise_input = Input(shape=(self.max_seq_len,), dtype='int32', name='premise')
+        hypo_input = Input(shape=(self.max_seq_len,), dtype='int32', name='hypo')
 
-        premiseInput = Input(shape=(self.maxSeqLen,), dtype='int32', name='premise')
-        hypoInput = Input(shape=(self.maxSeqLen,), dtype='int32', name='hypo')
-
-        def wordContext(_input, name):
-            embedding = Embedding(numWordsInCorpus + 1,
-                                  embeddingDimension,
-                                  weights=[wordEmbeddingMatrix], 
-                                  input_length=self.maxSeqLen, 
-                                  trainable=False, 
-                                  name=name+"_embedding")(_input)
-
+        def word_context(_input, name):
+            embedding = Embedding(
+                num_words_in_corpus + 1,
+                embedding_dimension,
+                weights=[word_embedding_matrix],
+                input_length=self.max_seq_len,
+                trainable=False,
+                name=name+"_embedding"
+            )(_input)
 
             word = Dropout(0.1)(embedding)
-            context = Bidirectional(LSTM(100, return_sequences=True),
-                                    merge_mode=None,
-                                    name = name + '_context')(word)
+            context = Bidirectional(
+                LSTM(100, return_sequences=True),
+                merge_mode=None,
+                name=name + '_context'
+            )(word)
             return (word, context)
-        
-        (premiseEmbedding, premiseContext) = wordContext(premiseInput, 'text')
-        (hypoEmbedding, hypoContext) = wordContext(hypoInput, 'hypothesis')
 
-        leftContext = []
-        leftContext.extend(hypoContext)
-        leftContext.extend(premiseContext)
-        
-        leftMatch = MatchLayer(embeddingDimension, self.maxSeqLen)(leftContext)
-        
-        rightContext = []
-        rightContext.extend(premiseContext)
-        rightContext.extend(hypoContext)
-        
-        rightMatch = MatchLayer(embeddingDimension, self.maxSeqLen)(rightContext)
-        
-        cosineLeft = Lambda(lambda x_input: cal_relevancy_matrix(x_input[0], x_input[1]))([premiseEmbedding, hypoEmbedding])
-        cosineRight = Lambda(lambda cosine: tf.transpose(cosine, perm=[0,2,1]))(cosineLeft)
-        
-        leftRepresentation = MaxPoolingLayer()(cosineLeft)
-        rightRepresentation = MaxPoolingLayer()(cosineRight)
-        
-        leftRepresentation.extend(leftMatch)
-        rightRepresentation.extend(rightMatch)
-        
-        left = concatenate(leftRepresentation, axis = 2)
+        (premiseEmbedding, premiseContext) = word_context(premise_input, 'text')
+        (hypoEmbedding, hypoContext) = word_context(hypo_input, 'hypothesis')
+
+        left_context = []
+        left_context.extend(hypoContext)
+        left_context.extend(premiseContext)
+
+        left_match = MatchLayer(embedding_dimension, self.max_seq_len)(left_context)
+
+        right_context = []
+        right_context.extend(premiseContext)
+        right_context.extend(hypoContext)
+
+        right_match = MatchLayer(embedding_dimension, self.max_seq_len)(right_context)
+
+        cosine_left = Lambda(lambda x_input: cal_relevancy_matrix(x_input[0], x_input[1]))(
+            [premiseEmbedding, hypoEmbedding]
+        )
+        consine_right = Lambda(lambda cosine: tf.transpose(cosine, perm=[0, 2, 1]))(cosine_left)
+
+        left_repr = MaxPoolingLayer()(cosine_left)
+        right_repr = MaxPoolingLayer()(consine_right)
+
+        left_repr.extend(left_match)
+        right_repr.extend(right_match)
+
+        left = concatenate(left_repr, axis=2)
         left = Dropout(0.1)(left)
-        
-        right = concatenate(rightRepresentation, axis = 2)
+
+        right = concatenate(right_repr, axis=2)
         right = Dropout(0.1)(right)
-        
-        aggregationLeft = Bidirectional(LSTM(100), name='aggregation_premise_context')(left)
 
-        aggregationRight = Bidirectional(LSTM(100), name='aggregation_hypo_context')(right)
-        
-        aggregation = concatenate([aggregationLeft, aggregationRight], axis = -1)
-                                
-        pred = Dense(200, activation = 'tanh', name = 'tanh_prediction')(aggregation)
-        pred = Dense(3, activation = 'softmax', name = 'softmax_prediction')(pred)
-        
+        agg_left = Bidirectional(LSTM(100), name='aggregation_premise_context')(left)
+        agg_right = Bidirectional(LSTM(100), name='aggregation_hypo_context')(right)
+        aggregation = concatenate([agg_left, agg_right], axis=-1)
+
+        pred = Dense(200, activation='tanh', name='tanh_prediction')(aggregation)
+        pred = Dense(3, activation='softmax', name='softmax_prediction')(pred)
+
         optimizer = Adam(lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=0.0)
-        
-        model = Model(inputs=[premiseInput, hypoInput], outputs=pred)
-        model.compile(loss = 'binary_crossentropy', 
-                      optimizer = optimizer,
-                      metrics = ['accuracy'])
-        
-        print('Model created')
-        model.load_weights(MODEL_WEIGHTS)
-        
 
+        model = Model(inputs=[premise_input, hypo_input], outputs=pred)
+        model.compile(
+            loss='binary_crossentropy',
+            optimizer=optimizer,
+            metrics=['accuracy']
+        )
 
-        global keras_model
+        logger.info("Loading model weights")
+        model.load_weights(path.join(self.data_folder, self.model_weights))
+        logger.info("Model weights loaded")
+
         global keras_graph
-        keras_model = model
         keras_graph = tf.get_default_graph()
 
-    def predict(self, premise, hypothesis):
-        s1_word_sequence = self.tokenizer.texts_to_sequences([premise])
-        s2_word_sequence = self.tokenizer.texts_to_sequences([hypothesis])
+        self.model = model
 
-        s1_data = pad_sequences(s1_word_sequence, maxlen=self.maxSeqLen)
-        s2_data = pad_sequences(s2_word_sequence, maxlen=self.maxSeqLen)
+    def predict(self, premise: str, hypothesis: str):
+        """
+        Predicts the entailment relationship between the given premise and hypothesis
+
+        Args:
+            premise:
+            hypothesis
+
+        Returns the list of scores for each entailment label
+        """
+
+        premise_seq = self.tokenizer.texts_to_sequences([premise])
+        hypo_seq = self.tokenizer.texts_to_sequences([hypothesis])
+
+        prem_data = pad_sequences(premise_seq, maxlen=self.max_seq_len)
+        hypo_data = pad_sequences(hypo_seq, maxlen=self.max_seq_len)
 
         with keras_graph.as_default():
-            return keras_model.predict([s1_data, s2_data])[0]
+            return self.model.predict([prem_data, hypo_data])[0]

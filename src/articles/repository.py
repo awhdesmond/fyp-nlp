@@ -43,8 +43,8 @@ class ArticleRepository:
 
         articles = []
         for doc in docs:
-            doc["_id"] = doc._id
-            articles.append(models.Article(**doc))
+            doc["_source"]["id"] = doc["_id"]
+            articles.append(models.Article(**doc["_source"]))
 
         return articles
 
@@ -70,8 +70,8 @@ class ArticleRepository:
             raise exceptions.ArticleNotFoundException(f"not found: {article_id}")
 
         doc = results.get("hits", {}).get("hits", [])[0]
-        doc["_id"] = doc._id
-        return models.Article(**doc)
+        doc["_source"]["id"] = doc["_id"]
+        return models.Article(**doc["_source"])
 
     def find_related_articles(self, query: str, min_score=MIN_RELATED_SCORE):
         """
@@ -142,7 +142,7 @@ class ArticleRepository:
 
         articles = []
         for doc in docs:
-            doc["_id"] = doc._id
-            articles.append(models.Article(**doc))
+            doc["_source"]["id"] = doc["_id"]
+            articles.append(models.Article(**doc["_source"]))
 
         return articles

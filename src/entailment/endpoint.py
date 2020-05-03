@@ -10,7 +10,7 @@ class EntailmentResource:
     def __init__(self, entailment_svc):
         self.entailment_svc = entailment_svc
 
-    def on_post_entailment(self, req, resp):
+    def on_post(self, req, resp):
         """
         HTTP POST /api/entailment
         Body parameters:
@@ -24,11 +24,11 @@ class EntailmentResource:
             raise falcon.HTTPBadRequest("Missing body parameters")
 
         try:
-            evidence_articles = self.entailment_svc.entailment_query(
+            evidences = self.entailment_svc.entailment_query(
                 payload.get(EntailmentResource.TEXT_PARAM),
             )
 
-            result = dict(evidence_articles=evidence_articles)
+            result = dict(evidences=[e.dict() for e in evidences])
         except exceptions.NoClaimException as e:
             result = dict(error=str(e))
 

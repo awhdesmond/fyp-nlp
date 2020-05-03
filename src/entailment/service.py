@@ -6,12 +6,14 @@ import articles
 from entailment import exceptions
 from entailment.nlp import engine, claim
 
+import log
+logger = log.init_stream_logger(__name__)
+
 
 class ArticleEvidence(BaseModel):
     """
     Wrapper class to hold entailment evidence for an article
     """
-
     article: Dict
     entailment: List[claim.Claim] = []
     contradiction: List[claim.Claim] = []
@@ -19,9 +21,9 @@ class ArticleEvidence(BaseModel):
 
     def is_empty(self):
         return all([
-            self.entailment.count() == 0,
-            self.contradiction.count() == 0,
-            self.neutral.count() == 0,
+            len(self.entailment) == 0,
+            len(self.contradiction) == 0,
+            len(self.neutral) == 0,
         ])
 
 
@@ -41,6 +43,8 @@ class EntailmentService:
         entailment_engine: engine.EntailmentEngine,
         article_svc: articles.service.ArticleService
     ):
+        self.claim_analyser = claim_analyser
+        self.claim_extractor = claim_extractor
         self.entailment_engine = entailment_engine
         self.article_svc = article_svc
 
@@ -60,18 +64,20 @@ class EntailmentService:
         # 1. Attempt to extract claim from query text
         claims = self.claim_extractor.extract_claims(query)
         if not claims:
-            raise exceptions.NoClaimException(f"no claims found for: {query}")
+            raise exceptions.NoClaimException(f"No claims found for: {query}")
 
         # 2. Find the related articles for the query text
         query_claim = claims[0]
         related_articles = self.article_svc.find_related_articles(query)
+
+        logger.info(f"Found {len(related_articles)} related articles")
 
         # 3. Generate entailment evidences from related article claims
         evidences = []
         for article in related_articles:
             evidence = ArticleEvidence(article=article)
 
-            content = article["content"]
+            content = article.content
             article_claims = self.claim_extractor.extract_claims(content)
             related_claims = [
                 c for c in article_claims
@@ -84,15 +90,18 @@ class EntailmentService:
                 premise = related_claim.sentence
                 pred, score = self.entailment_engine.predict(hypothesis, premise)
 
-                if not pred:
+                if pred is None:
                     continue
 
-                related_claim.score = score
-                if pred == engine.EntailmentEngine.ENTAILMENT_INDEX:
+                related_claim.score = str(score)
+
+                if pred == engine.EntailmentEngine.ENTAILMENT:
                     evidence.entailment.append(related_claim)
-                if pred == engine.EntailmentEngine.CONTRADICTION_INDEX:
+
+                if pred == engine.EntailmentEngine.CONTRADICTION:
                     evidence.contradiction.append(related_claim)
-                if pred == engine.EntailmentEngine.NEUTRAL_INDEX:
+
+                if pred == engine.EntailmentEngine.NEUTRAL:
                     evidence.neutral.append(related_claim)
 
             if not evidence.is_empty():

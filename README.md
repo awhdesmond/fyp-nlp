@@ -1,16 +1,31 @@
 # Pinocchio API Server
-Backend server for pinocchio.
+Backend server for Pinocchio Fake News Detection
 
-## Usage
+## Dependencies
+* Python 3.6.3
+* Elassticsearch 6
+
+## Configuration Options
+|Name|Purpose|Default|
+|----|-------|-------|
+|ALLNLI_DEV_PATH|AllNLI Dev Dataset|AllNLI/dev.jsonl|
+|ALLNLI_TRAIN_PATH|AllNLI Train Dataset|AllNLI/train.jsonl|
+|CORS_ORIGIN|CORS allowed origins|localhost:3000|
+|DATA_FOLDER|Base data folder|DATA_FOLDER|
+|ENTAILMENT_MODEL|Entailment model weights|glove-full-glove-full-adam-checkpoint-weights.05-0.80.hdf5|
+|ES_ENDPOINT|Elasticsearch Endpoint|localhost:9200|
+|LOG_REG_MODEL|Logistic Regression model|logreg.model|
+|RTE_TEST_PATH|RTE Test Dataset|rte_1.0/rte_test.json|
+|RTE_TRAIN_PATH|RTE Train Dataset|rte_1.0/rte.json|
+|SPACY_NLP_MODEL|Spacy model|en_core_web_md-2.2.5|
+|WORD_EMBEDDINGS|GLoVE embeddings name|glove.840B.300d|
+
+## Start Server
 ```
 usage: server.py [-h] [--app-name APP_NAME]
                  [--env-name {LOCAL,DEV,TEST,STAGING,PROD}]
                  [--env-path ENV_PATH] [--bind BIND]
                  [--worker-class WORKER_CLASS] [--workers WORKERS]
-                 [--access-control-allow-origin ACCESS_CONTROL_ALLOW_ORIGIN]
-                 [--access-control-allow-methods ACCESS_CONTROL_ALLOW_METHODS]
-                 [--access-control-allow-credentials ACCESS_CONTROL_ALLOW_CREDENTIALS]
-                 [--access-control-allow-headers ACCESS_CONTROL_ALLOW_HEADERS]
 
 Runs the App
 
@@ -31,15 +46,4 @@ Gunicorn:
   --workers WORKERS     The number of worker processes for handling requests.
                         0 means using the following formula: CPU cores*2+1.
                         (default 0)
-
-Middleware:
-  --access-control-allow-origin ACCESS_CONTROL_ALLOW_ORIGIN
-                        (default *)
-  --access-control-allow-methods ACCESS_CONTROL_ALLOW_METHODS
-                        (default GET, PUT, POST, DELETE, HEAD, PATCH)
-  --access-control-allow-credentials ACCESS_CONTROL_ALLOW_CREDENTIALS
-                        (default true)
-  --access-control-allow-headers ACCESS_CONTROL_ALLOW_HEADERS
-                        (default Origin, Authorization, Content-Type,
-                        X-Requested-With)
 ```

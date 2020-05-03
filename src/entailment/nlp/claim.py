@@ -10,7 +10,7 @@ class Claim(BaseModel):
     Represents a natural sentence with SPOL metadata
     """
     entities: Dict
-    score: float
+    score: str
     sentence: str
 
 
@@ -165,13 +165,13 @@ class ClaimExtractor:
 
         return "".join(sanitized_list).strip()
 
-    def is_root_predicate(self, token: spacy.tokens.Token):
+    def is_root_predicate(self, token: spacy.tokens.token.Token):
         """
         Returns if a token is the root predicate of a sentence
         """
         return token.pos_ == "VERB" and token.dep_ == "ROOT"
 
-    def is_claimer_verb(self, token: spacy.tokens.Token):
+    def is_claimer_verb(self, token: spacy.tokens.token.Token):
         claimer_verbs = set([
             "say",
             "announce",
@@ -221,7 +221,7 @@ class ClaimExtractor:
 
         return entities_map
 
-    def extract_claimer_saying(self, token: spacy.tokens.Token):
+    def extract_claimer_saying(self, token: spacy.tokens.token.Token):
         """Extract the claims made by a claimer in the original
         sentence using ccomp (clausal complement)
 
@@ -233,25 +233,25 @@ class ClaimExtractor:
         if not ccomp_child:
             return None
 
-        saying = " ".join([x.text for x in ccomp_child[0].innerToken.subtree])
+        saying = " ".join([x.text for x in ccomp_child[0].token.subtree])
         saying = saying.strip()
         return saying
 
     def extract_claim(
         self,
         sentence: spacy.tokens.Span,
-        token: spacy.tokens.Token
+        token: spacy.tokens.token.Token
     ):
         """
         Return the claim by parsing the token's tree
         """
         tree = pos_tree.PartOfSpeechTree(token)
 
-        if not tree.has_spo_structure:
+        if not tree.has_spo_structure():
             return None
 
         entities_map = self.extract_sentence_entities(sentence.text)
-        claim = Claim(entities_map, 0, sentence.text)
+        claim = Claim(entities=entities_map, score=0, sentence=sentence.text)
         return claim
 
     def extract_claims_from_sentence(self, sentence: spacy.tokens.Span):

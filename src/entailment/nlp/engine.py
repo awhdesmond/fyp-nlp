@@ -1,40 +1,50 @@
 from entailment.nlp import model
 
+import log
+logger = log.init_stream_logger(__name__)
 
 class EntailmentEngine:
 
-    ENTAILMENT_INDEX = 0
-    CONTRADICTION_INDEX = 1
-    NEUTRAL_INDEX = 2
+    ENTAILMENT = 0
+    CONTRADICTION = 1
+    NEUTRAL = 2
+
+    THRESHOLD = 0.8
 
     def __init__(self, model: model.TextualEntailmentModel):
         self.model = model
-        # self.textEntModel.createModel()
+        self.model.create_model()
 
     def predict(self, hypothesis: str, premise: str):
         """Predict the entailment between hypothesis and premise
 
         Returns (prediction, score/confidence) or (None, None) if score
-        is not above 0.5
+        is not above THRESHOLD
         """
-        entailment_result = self.model.predict(premise, hypothesis)
 
-        if entailment_result[EntailmentEngine.ENTAILMENT_INDEX] > 0.5:
+        logger.debug(f"""
+            Predicting: {hypothesis}
+            Against: {premise}
+        """)
+        prediction = self.model.predict(premise, hypothesis)
+        logger.debug(f"Prediction: {prediction}\n")
+
+        if prediction[EntailmentEngine.ENTAILMENT] > EntailmentEngine.THRESHOLD:
             return (
-                EntailmentEngine.ENTAILMENT_INDEX,
-                entailment_result[EntailmentEngine.ENTAILMENT_INDEX]
+                EntailmentEngine.ENTAILMENT,
+                prediction[EntailmentEngine.ENTAILMENT]
             )
 
-        if entailment_result[EntailmentEngine.CONTRADICTION_INDEX] > 0.5:
+        if prediction[EntailmentEngine.CONTRADICTION] > EntailmentEngine.THRESHOLD:
             return (
-                EntailmentEngine.CONTRADICTION_INDEX,
-                entailment_result[EntailmentEngine.CONTRADICTION_INDEX]
+                EntailmentEngine.CONTRADICTION,
+                prediction[EntailmentEngine.CONTRADICTION]
             )
 
-        if entailment_result[EntailmentEngine.NEUTRAL_INDEX] > 0.5:
+        if prediction[EntailmentEngine.NEUTRAL] > EntailmentEngine.THRESHOLD:
             return (
-                EntailmentEngine.NEUTRAL_INDEX,
-                entailment_result[EntailmentEngine.NEUTRAL_INDEX]
+                EntailmentEngine.NEUTRAL,
+                prediction[EntailmentEngine.NEUTRAL]
             )
 
         return None, None
