@@ -9,7 +9,7 @@ class EntailmentEngine:
     CONTRADICTION = 1
     NEUTRAL = 2
 
-    THRESHOLD = 0.8
+    THRESHOLD = 0.7
 
     def __init__(self, model: model.TextualEntailmentModel):
         self.model = model

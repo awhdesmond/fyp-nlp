@@ -1,3 +1,5 @@
 DATA_FOLDER
 env
 __pycache__
+docs
+.vscode
