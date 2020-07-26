@@ -77,10 +77,13 @@ class EntailmentService:
         for article in related_articles:
             evidence = ArticleEvidence(article=article)
 
+            title = article.title
             content = article.content
+
+            title_claims = self.claim_extractor.extract_claims(title)
             article_claims = self.claim_extractor.extract_claims(content)
             related_claims = [
-                c for c in article_claims
+                c for c in article_claims + title_claims
                 if self.claim_analyser.is_related(c, query_claim)
             ]
 
