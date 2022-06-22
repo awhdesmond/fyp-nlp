@@ -29,7 +29,7 @@ Markdown==3.2.1
 mccabe==0.6.1
 mock==4.0.2
 murmurhash==1.0.2
-numpy==1.18.3
+numpy==1.22.0
 oauthlib==3.1.0
 opt-einsum==3.2.1
 plac==1.1.3
